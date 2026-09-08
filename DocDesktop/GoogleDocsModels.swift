@@ -34,6 +34,7 @@ enum GoogleDocsServiceError: LocalizedError {
     case noDocumentLoaded
     case noChangesToSave
     case unsupportedEditRange
+    case paragraphBreakEditUnsupported
 
     var errorDescription: String? {
         switch self {
@@ -52,6 +53,8 @@ enum GoogleDocsServiceError: LocalizedError {
             return "No changes to save."
         case .unsupportedEditRange:
             return "This edit touches an image, table, or unsupported item. Save smaller text-only edits for now."
+        case .paragraphBreakEditUnsupported:
+            return "This edit changes a paragraph break. Save text inside one paragraph for now."
         }
     }
 }

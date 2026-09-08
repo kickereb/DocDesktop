@@ -14,14 +14,19 @@ struct GoogleDocsIndexMapper {
         let editedChangeLength = edited.length - prefixLength - suffixLength
         let replacementRange = NSRange(location: prefixLength, length: editedChangeLength)
         let replacementText = edited.substring(with: replacementRange)
+        let originalChangeRange = NSRange(location: prefixLength, length: originalChangeLength)
         let isInsertionOnly = originalChangeLength == 0 && !replacementText.isEmpty
+
         let googleStart = isInsertionOnly
             ? try googleInsertionIndex(for: prefixLength, segments: segments)
             : try googleBoundaryIndex(for: prefixLength, segments: segments)
-        let googleEnd = isInsertionOnly
+        let rawGoogleEnd = isInsertionOnly
             ? googleStart
             : try googleBoundaryIndex(for: prefixLength + originalChangeLength, segments: segments)
-        let tabID = try commonTabID(for: NSRange(location: prefixLength, length: originalChangeLength), segments: segments)
+        let googleEnd = isInsertionOnly
+            ? rawGoogleEnd
+            : safeDeleteEndIndex(rawGoogleEnd, for: prefixLength + originalChangeLength, segments: segments)
+        let tabID = try commonTabID(for: originalChangeRange, segments: segments)
 
         if googleEnd < googleStart {
             throw GoogleDocsServiceError.unsupportedEditRange
@@ -86,6 +91,14 @@ struct GoogleDocsIndexMapper {
         }
 
         throw GoogleDocsServiceError.unsupportedEditRange
+    }
+
+    private func safeDeleteEndIndex(_ googleEnd: Int, for localEnd: Int, segments: [GoogleDocsTextSegment]) -> Int {
+        guard let segment = segments.first(where: { localEnd == NSMaxRange($0.localRange) && googleEnd == $0.googleEndIndex }) else {
+            return googleEnd
+        }
+
+        return max(segment.googleStartIndex, segment.googleEndIndex - 1)
     }
 
     private func commonTabID(for localRange: NSRange, segments: [GoogleDocsTextSegment]) throws -> String? {

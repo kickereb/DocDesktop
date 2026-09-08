@@ -42,4 +42,17 @@ struct GoogleDocsIndexMapperTests {
         #expect(edit.googleEndIndex == 6)
         #expect(edit.replacementText == "p")
     }
+
+    @Test func deleteAtSegmentEndClampsBeforeProtectedNewline() throws {
+        let mapper = GoogleDocsIndexMapper()
+        let segments = [
+            GoogleDocsTextSegment(localRange: NSRange(location: 0, length: 6), googleStartIndex: 1, googleEndIndex: 7, tabID: nil)
+        ]
+
+        let edit = try mapper.edit(from: "hello\n", to: "", segments: segments)
+
+        #expect(edit.googleStartIndex == 1)
+        #expect(edit.googleEndIndex == 6)
+        #expect(edit.replacementText == "")
+    }
 }

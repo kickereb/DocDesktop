@@ -63,4 +63,34 @@ struct GoogleDocsFormattingShortcutTests {
         #expect(shortcut?.edit.replacementText == "Site")
         #expect(shortcut?.formattingRequests == [.link(url: url, tabID: nil, startIndex: 1, endIndex: 5)])
     }
+
+    @Test func headingMarkerOnExistingLineFormatsWithoutTextEdit() throws {
+        let mapper = GoogleDocsFormattingShortcutMapper()
+        let segments = [GoogleDocsTextSegment(localRange: NSRange(location: 0, length: 6), googleStartIndex: 1, googleEndIndex: 7, tabID: nil)]
+
+        let shortcut = mapper.shortcut(from: "Title\n", to: "# Title\n", segments: segments)
+
+        #expect(shortcut?.edit.replacementText == "")
+        #expect(shortcut?.formattingRequests == [.heading(level: 1, tabID: nil, startIndex: 1, endIndex: 6)])
+    }
+
+    @Test func bareBulletMarkerFormatsEmptyParagraph() throws {
+        let mapper = GoogleDocsFormattingShortcutMapper()
+        let segments = [GoogleDocsTextSegment(localRange: NSRange(location: 0, length: 1), googleStartIndex: 1, googleEndIndex: 2, tabID: nil)]
+
+        let shortcut = mapper.shortcut(from: "\n", to: "-\n", segments: segments)
+
+        #expect(shortcut?.edit.replacementText == "")
+        #expect(shortcut?.formattingRequests == [.bulletList(tabID: nil, startIndex: 1, endIndex: 2)])
+    }
+
+    @Test func bareNumberedMarkerFormatsEmptyParagraph() throws {
+        let mapper = GoogleDocsFormattingShortcutMapper()
+        let segments = [GoogleDocsTextSegment(localRange: NSRange(location: 0, length: 1), googleStartIndex: 1, googleEndIndex: 2, tabID: nil)]
+
+        let shortcut = mapper.shortcut(from: "\n", to: "1.\n", segments: segments)
+
+        #expect(shortcut?.edit.replacementText == "")
+        #expect(shortcut?.formattingRequests == [.numberedList(tabID: nil, startIndex: 1, endIndex: 2)])
+    }
 }
