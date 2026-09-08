@@ -1,0 +1,119 @@
+import Foundation
+
+struct GoogleDocsIndexMapper {
+    func edit(from originalText: String, to editedText: String, segments: [GoogleDocsTextSegment]) throws -> GoogleDocsTextEdit {
+        guard originalText != editedText else {
+            throw GoogleDocsServiceError.noChangesToSave
+        }
+
+        let original = originalText as NSString
+        let edited = editedText as NSString
+        let prefixLength = commonPrefixLength(original: original, edited: edited)
+        let suffixLength = commonSuffixLength(original: original, edited: edited, prefixLength: prefixLength)
+        let originalChangeLength = original.length - prefixLength - suffixLength
+        let editedChangeLength = edited.length - prefixLength - suffixLength
+        let replacementRange = NSRange(location: prefixLength, length: editedChangeLength)
+        let replacementText = edited.substring(with: replacementRange)
+        let isInsertionOnly = originalChangeLength == 0 && !replacementText.isEmpty
+        let googleStart = isInsertionOnly
+            ? try googleInsertionIndex(for: prefixLength, segments: segments)
+            : try googleBoundaryIndex(for: prefixLength, segments: segments)
+        let googleEnd = isInsertionOnly
+            ? googleStart
+            : try googleBoundaryIndex(for: prefixLength + originalChangeLength, segments: segments)
+        let tabID = try commonTabID(for: NSRange(location: prefixLength, length: originalChangeLength), segments: segments)
+
+        if googleEnd < googleStart {
+            throw GoogleDocsServiceError.unsupportedEditRange
+        }
+
+        return GoogleDocsTextEdit(
+            tabID: tabID,
+            googleStartIndex: googleStart,
+            googleEndIndex: googleEnd,
+            replacementText: replacementText
+        )
+    }
+
+    private func commonPrefixLength(original: NSString, edited: NSString) -> Int {
+        let limit = min(original.length, edited.length)
+        var index = 0
+
+        while index < limit && original.character(at: index) == edited.character(at: index) {
+            index += 1
+        }
+
+        return index
+    }
+
+    private func commonSuffixLength(original: NSString, edited: NSString, prefixLength: Int) -> Int {
+        let originalLength = original.length
+        let editedLength = edited.length
+        var suffixLength = 0
+
+        while suffixLength < originalLength - prefixLength,
+              suffixLength < editedLength - prefixLength,
+              original.character(at: originalLength - suffixLength - 1) == edited.character(at: editedLength - suffixLength - 1) {
+            suffixLength += 1
+        }
+
+        return suffixLength
+    }
+
+    private func googleBoundaryIndex(for localLocation: Int, segments: [GoogleDocsTextSegment]) throws -> Int {
+        for segment in segments {
+            if localLocation >= segment.localRange.location && localLocation <= NSMaxRange(segment.localRange) {
+                return segment.googleStartIndex + localLocation - segment.localRange.location
+            }
+        }
+
+        throw GoogleDocsServiceError.unsupportedEditRange
+    }
+
+    private func googleInsertionIndex(for localLocation: Int, segments: [GoogleDocsTextSegment]) throws -> Int {
+        for segment in segments {
+            let localEnd = NSMaxRange(segment.localRange)
+            if localLocation >= segment.localRange.location && localLocation <= localEnd {
+                let offset = localLocation - segment.localRange.location
+                let mappedIndex = segment.googleStartIndex + offset
+
+                if mappedIndex >= segment.googleEndIndex {
+                    return max(segment.googleStartIndex, segment.googleEndIndex - 1)
+                }
+
+                return mappedIndex
+            }
+        }
+
+        throw GoogleDocsServiceError.unsupportedEditRange
+    }
+
+    private func commonTabID(for localRange: NSRange, segments: [GoogleDocsTextSegment]) throws -> String? {
+        if localRange.length == 0 {
+            return try tabID(at: localRange.location, segments: segments)
+        }
+
+        let touchedSegments = segments.filter { segment in
+            NSIntersectionRange(segment.localRange, localRange).length > 0
+        }
+
+        guard !touchedSegments.isEmpty else {
+            throw GoogleDocsServiceError.unsupportedEditRange
+        }
+
+        let tabIDs = Set(touchedSegments.map(\.tabID))
+        guard tabIDs.count == 1 else {
+            throw GoogleDocsServiceError.unsupportedEditRange
+        }
+
+        return touchedSegments[0].tabID
+    }
+
+    private func tabID(at localLocation: Int, segments: [GoogleDocsTextSegment]) throws -> String? {
+        if let segment = segments.first(where: { localLocation >= $0.localRange.location && localLocation <= NSMaxRange($0.localRange) }) {
+            return segment.tabID
+        }
+
+        throw GoogleDocsServiceError.unsupportedEditRange
+    }
+}
