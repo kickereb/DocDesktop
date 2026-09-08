@@ -4,15 +4,24 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var desktopWindowController: DesktopWindowController?
+    private var globalHotKeyManager: GlobalHotKeyManager?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         configureMenuBarItem()
+        configureGlobalHotKey()
         showDocumentWindow()
     }
 
     func applicationDidResignActive(_ notification: Notification) {
         desktopWindowController?.returnToDesktopLevel()
+    }
+
+    private func configureGlobalHotKey() {
+        globalHotKeyManager = GlobalHotKeyManager { [weak self] in
+            self?.popUpDocumentWindow()
+        }
+        globalHotKeyManager?.register()
     }
 
     private func configureMenuBarItem() {
@@ -21,7 +30,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.image?.isTemplate = true
 
         let menu = NSMenu()
-        menu.addItem(menuItem(title: "Show Document", action: #selector(showDocumentWindow)))
+        menu.addItem(menuItem(title: "Pop Up Document", action: #selector(popUpDocumentWindow), keyEquivalent: "d", modifiers: [.option]))
+        menu.addItem(menuItem(title: "Show On Desktop", action: #selector(showDocumentWindow)))
         menu.addItem(menuItem(title: "Hide Document", action: #selector(hideDocumentWindow)))
         menu.addItem(menuItem(title: "Change Document", action: #selector(changeDocument)))
         menu.addItem(menuItem(title: "Refresh", action: #selector(refreshDocuments)))
@@ -34,9 +44,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = menu
     }
 
-    private func menuItem(title: String, action: Selector, keyEquivalent: String = "") -> NSMenuItem {
+    private func menuItem(
+        title: String,
+        action: Selector,
+        keyEquivalent: String = "",
+        modifiers: NSEvent.ModifierFlags = []
+    ) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
         item.target = self
+        if !modifiers.isEmpty {
+            item.keyEquivalentModifierMask = modifiers
+        }
         return item
     }
 
@@ -51,7 +69,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             desktopWindowController = DesktopWindowController()
         }
 
-        desktopWindowController?.prepareForInteraction()
+        desktopWindowController?.returnToDesktopLevel()
+    }
+
+    @objc private func popUpDocumentWindow() {
+        if desktopWindowController == nil {
+            desktopWindowController = DesktopWindowController()
+        }
+
+        desktopWindowController?.popUpForShortcut()
     }
 
     @objc func hideDocumentWindow() {
@@ -59,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func changeDocument() {
-        showDocumentWindow()
+        popUpDocumentWindow()
         NotificationCenter.default.post(name: .showDocumentPicker, object: nil)
     }
 

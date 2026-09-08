@@ -8,6 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		A0EA8324304EA69700721FC5 /* GoogleDocsIndexMapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0EA8323304EA69700721FC5 /* GoogleDocsIndexMapper.swift */; };
+		A0EA83A2304F90F200721FC5 /* GlobalHotKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0EA83A1304F90F200721FC5 /* GlobalHotKeyManager.swift */; };
+		A0EA83A4304FA96400721FC5 /* GoogleDocsFormattingShortcut.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0EA83A3304FA96400721FC5 /* GoogleDocsFormattingShortcut.swift */; };
+		A0EA83A6304FA9FB00721FC5 /* DocumentSyncPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0EA83A5304FA9FB00721FC5 /* DocumentSyncPolicy.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -32,6 +35,9 @@
 		A0DC6AE9304E6094002FBD45 /* DocDesktopTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DocDesktopTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A0DC6AF3304E6094002FBD45 /* DocDesktopUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DocDesktopUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A0EA8323304EA69700721FC5 /* GoogleDocsIndexMapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleDocsIndexMapper.swift; sourceTree = "<group>"; };
+		A0EA83A1304F90F200721FC5 /* GlobalHotKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlobalHotKeyManager.swift; sourceTree = "<group>"; };
+		A0EA83A3304FA96400721FC5 /* GoogleDocsFormattingShortcut.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoogleDocsFormattingShortcut.swift; sourceTree = "<group>"; };
+		A0EA83A5304FA9FB00721FC5 /* DocumentSyncPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocumentSyncPolicy.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -98,6 +104,9 @@
 				A0DC6AF6304E6094002FBD45 /* DocDesktopUITests */,
 				A0DC6ADD304E6092002FBD45 /* Products */,
 				A0EA8323304EA69700721FC5 /* GoogleDocsIndexMapper.swift */,
+				A0EA83A1304F90F200721FC5 /* GlobalHotKeyManager.swift */,
+				A0EA83A3304FA96400721FC5 /* GoogleDocsFormattingShortcut.swift */,
+				A0EA83A5304FA9FB00721FC5 /* DocumentSyncPolicy.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -255,6 +264,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A0EA83A2304F90F200721FC5 /* GlobalHotKeyManager.swift in Sources */,
+				A0EA83A4304FA96400721FC5 /* GoogleDocsFormattingShortcut.swift in Sources */,
+				A0EA83A6304FA9FB00721FC5 /* DocumentSyncPolicy.swift in Sources */,
 				A0EA8324304EA69700721FC5 /* GoogleDocsIndexMapper.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

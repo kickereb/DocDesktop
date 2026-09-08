@@ -8,7 +8,7 @@ final class DesktopWindowController: NSWindowController, NSWindowDelegate {
         let contentView = ContentView()
         let window = WidgetWindow(
             contentRect: stateStore.restoredFrame(),
-            styleMask: [.titled, .nonactivatingPanel, .fullSizeContentView, .resizable],
+            styleMask: [.titled, .fullSizeContentView, .resizable],
             backing: .buffered,
             defer: false
         )
@@ -47,7 +47,13 @@ final class DesktopWindowController: NSWindowController, NSWindowDelegate {
 
     func prepareForInteraction() {
         guard let window else { return }
-        window.level = Self.desktopWidgetLevel
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    func popUpForShortcut() {
+        guard let window else { return }
+        window.level = .floating
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }

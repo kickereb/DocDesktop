@@ -14,6 +14,8 @@ final class DocumentContentViewModel {
 
     @ObservationIgnored private let docsService: GoogleDocsService
     @ObservationIgnored private let indexMapper = GoogleDocsIndexMapper()
+    @ObservationIgnored private let shortcutMapper = GoogleDocsFormattingShortcutMapper()
+    @ObservationIgnored private let syncPolicy = DocumentSyncPolicy()
     @ObservationIgnored private var autosaveTask: Task<Void, Never>?
     @ObservationIgnored private var syncTask: Task<Void, Never>?
     private var selectedDocument: SelectedDocument?
@@ -136,15 +138,22 @@ final class DocumentContentViewModel {
         }
 
         do {
-            let edit = try indexMapper.edit(from: document.plainText, to: editedText, segments: document.textSegments)
+            let shortcut = shortcutMapper.shortcut(from: document.plainText, to: editedText, segments: document.textSegments)
+            let edit = try shortcut?.edit ?? indexMapper.edit(from: document.plainText, to: editedText, segments: document.textSegments)
+            let formattingRequests = shortcut?.formattingRequests ?? []
             isSaving = true
-            statusMessage = "Saving"
+            statusMessage = formattingRequests.isEmpty ? "Saving" : "Saving format"
             errorMessage = nil
-            try await docsService.save(edit: edit, documentID: document.documentID, revisionID: document.revisionID)
+            try await docsService.save(
+                edit: edit,
+                formattingRequests: formattingRequests,
+                documentID: document.documentID,
+                revisionID: document.revisionID
+            )
             let refreshedDocument = try await docsService.loadDocument(id: document.documentID)
             replaceDocumentIfSafe(refreshedDocument)
             hasUnsavedChanges = false
-            statusMessage = "Saved"
+            statusMessage = formattingRequests.isEmpty ? "Saved" : "Formatted"
         } catch GoogleDocsServiceError.noChangesToSave {
             hasUnsavedChanges = false
             statusMessage = "Saved"
@@ -175,17 +184,18 @@ final class DocumentContentViewModel {
 
     private func syncFromRemoteIfSafe() async {
         guard let selectedDocument, !isLoading, !isSaving else { return }
-        guard !hasUnsavedChanges else {
-            statusMessage = "Unsaved"
-            return
-        }
 
         do {
             let remoteDocument = try await docsService.loadDocument(id: selectedDocument.id)
-            if remoteDocument.revisionID != document?.revisionID {
+            switch syncPolicy.decision(hasUnsavedChanges: hasUnsavedChanges, localRevisionID: document?.revisionID, remoteRevisionID: remoteDocument.revisionID) {
+            case .loadRemote:
                 replaceDocumentIfSafe(remoteDocument)
                 statusMessage = "Remote changes loaded"
                 errorMessage = nil
+            case .keepLocalUnsaved:
+                statusMessage = "Unsaved"
+            case .noChange:
+                break
             }
         } catch {
             statusMessage = "Sync failed"

@@ -40,14 +40,21 @@ struct GoogleDocsService {
         return GoogleDocsParser(loadedImages: images).parse(apiDocument)
     }
 
-    func save(edit: GoogleDocsTextEdit, documentID: String, revisionID: String?) async throws {
+    func save(
+        edit: GoogleDocsTextEdit,
+        formattingRequests: [GoogleDocsFormattingRequest] = [],
+        documentID: String,
+        revisionID: String?
+    ) async throws {
         let url = baseURL.appending(path: "documents/\(documentID):batchUpdate")
         let accessToken = try await authManager.validAccessToken()
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try encoder.encode(BatchUpdateRequest(edit: edit, revisionID: revisionID))
+        request.httpBody = try encoder.encode(
+            BatchUpdateRequest(edit: edit, formattingRequests: formattingRequests, revisionID: revisionID)
+        )
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let httpResponse = response as? HTTPURLResponse else {
@@ -130,7 +137,7 @@ private struct BatchUpdateRequest: Encodable {
     let requests: [BatchRequest]
     let writeControl: WriteControl?
 
-    init(edit: GoogleDocsTextEdit, revisionID: String?) {
+    init(edit: GoogleDocsTextEdit, formattingRequests: [GoogleDocsFormattingRequest], revisionID: String?) {
         var requests: [BatchRequest] = []
 
         if edit.googleEndIndex > edit.googleStartIndex {
@@ -141,6 +148,8 @@ private struct BatchUpdateRequest: Encodable {
             requests.append(.insertText(InsertTextRequest(text: edit.replacementText, location: EditLocation(index: edit.googleStartIndex, tabID: edit.tabID))))
         }
 
+        requests.append(contentsOf: formattingRequests.map(BatchRequest.init(formattingRequest:)))
+
         self.requests = requests
         self.writeControl = revisionID.map { WriteControl(targetRevisionId: $0) }
     }
@@ -149,6 +158,42 @@ private struct BatchUpdateRequest: Encodable {
 private enum BatchRequest: Encodable {
     case deleteContentRange(DeleteContentRangeRequest)
     case insertText(InsertTextRequest)
+    case updateParagraphStyle(UpdateParagraphStyleRequest)
+    case createParagraphBullets(CreateParagraphBulletsRequest)
+    case updateTextStyle(UpdateTextStyleRequest)
+
+    init(formattingRequest: GoogleDocsFormattingRequest) {
+        switch formattingRequest {
+        case .heading(let level, let tabID, let startIndex, let endIndex):
+            self = .updateParagraphStyle(
+                UpdateParagraphStyleRequest(
+                    range: EditRange(startIndex: startIndex, endIndex: endIndex, tabID: tabID),
+                    paragraphStyle: ParagraphStylePayload(namedStyleType: "HEADING_\(level)"),
+                    fields: "namedStyleType"
+                )
+            )
+        case .bulletList(let tabID, let startIndex, let endIndex):
+            self = .createParagraphBullets(
+                CreateParagraphBulletsRequest(range: EditRange(startIndex: startIndex, endIndex: endIndex, tabID: tabID), bulletPreset: "BULLET_DISC_CIRCLE_SQUARE")
+            )
+        case .numberedList(let tabID, let startIndex, let endIndex):
+            self = .createParagraphBullets(
+                CreateParagraphBulletsRequest(range: EditRange(startIndex: startIndex, endIndex: endIndex, tabID: tabID), bulletPreset: "NUMBERED_DECIMAL_ALPHA_ROMAN")
+            )
+        case .checkboxList(let tabID, let startIndex, let endIndex):
+            self = .createParagraphBullets(
+                CreateParagraphBulletsRequest(range: EditRange(startIndex: startIndex, endIndex: endIndex, tabID: tabID), bulletPreset: "BULLET_CHECKBOX")
+            )
+        case .link(let url, let tabID, let startIndex, let endIndex):
+            self = .updateTextStyle(
+                UpdateTextStyleRequest(
+                    range: EditRange(startIndex: startIndex, endIndex: endIndex, tabID: tabID),
+                    textStyle: TextStylePayload(link: LinkPayload(url: url.absoluteString)),
+                    fields: "link"
+                )
+            )
+        }
+    }
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
@@ -158,12 +203,21 @@ private enum BatchRequest: Encodable {
             try container.encode(request, forKey: .deleteContentRange)
         case .insertText(let request):
             try container.encode(request, forKey: .insertText)
+        case .updateParagraphStyle(let request):
+            try container.encode(request, forKey: .updateParagraphStyle)
+        case .createParagraphBullets(let request):
+            try container.encode(request, forKey: .createParagraphBullets)
+        case .updateTextStyle(let request):
+            try container.encode(request, forKey: .updateTextStyle)
         }
     }
 
     private enum CodingKeys: String, CodingKey {
         case deleteContentRange
         case insertText
+        case updateParagraphStyle
+        case createParagraphBullets
+        case updateTextStyle
     }
 }
 
@@ -174,6 +228,35 @@ private struct DeleteContentRangeRequest: Encodable {
 private struct InsertTextRequest: Encodable {
     let text: String
     let location: EditLocation
+}
+
+private struct UpdateParagraphStyleRequest: Encodable {
+    let range: EditRange
+    let paragraphStyle: ParagraphStylePayload
+    let fields: String
+}
+
+private struct ParagraphStylePayload: Encodable {
+    let namedStyleType: String
+}
+
+private struct CreateParagraphBulletsRequest: Encodable {
+    let range: EditRange
+    let bulletPreset: String
+}
+
+private struct UpdateTextStyleRequest: Encodable {
+    let range: EditRange
+    let textStyle: TextStylePayload
+    let fields: String
+}
+
+private struct TextStylePayload: Encodable {
+    let link: LinkPayload
+}
+
+private struct LinkPayload: Encodable {
+    let url: String
 }
 
 private struct EditRange: Encodable {

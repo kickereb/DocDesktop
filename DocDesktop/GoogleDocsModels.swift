@@ -13,14 +13,14 @@ struct GoogleDocsDocument {
     }
 }
 
-struct GoogleDocsTextSegment {
+struct GoogleDocsTextSegment: Equatable {
     let localRange: NSRange
     let googleStartIndex: Int
     let googleEndIndex: Int
     let tabID: String?
 }
 
-struct GoogleDocsTextEdit {
+struct GoogleDocsTextEdit: Equatable {
     let tabID: String?
     let googleStartIndex: Int
     let googleEndIndex: Int
