@@ -54,7 +54,9 @@ struct MacAttributedTextView: NSViewRepresentable {
         textView.isEditable = isEditable
 
         if context.coordinator.loadedDocumentID != documentID {
+            context.coordinator.isApplyingProgrammaticText = true
             textView.textStorage?.setAttributedString(text)
+            context.coordinator.isApplyingProgrammaticText = false
             context.coordinator.loadedDocumentID = documentID
             context.coordinator.currentText = text.string
         }
@@ -63,6 +65,7 @@ struct MacAttributedTextView: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var loadedDocumentID: String?
         var currentText = ""
+        var isApplyingProgrammaticText = false
         private let onTextChange: (String) -> Void
         private let onSelectionChange: (NSRange) -> Void
 
@@ -72,6 +75,7 @@ struct MacAttributedTextView: NSViewRepresentable {
         }
 
         func textDidChange(_ notification: Notification) {
+            guard !isApplyingProgrammaticText else { return }
             guard let textView = notification.object as? NSTextView else { return }
             currentText = textView.string
             onTextChange(textView.string)

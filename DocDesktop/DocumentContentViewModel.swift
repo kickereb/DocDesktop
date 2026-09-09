@@ -204,9 +204,9 @@ final class DocumentContentViewModel {
                 revisionID: document.revisionID
             )
             let refreshedDocument = try await docsService.loadDocument(id: document.documentID)
-            replaceDocumentIfSafe(refreshedDocument)
             hasUnsavedChanges = false
             pendingFormattingRequests = []
+            replaceDocumentIfSafe(refreshedDocument)
             statusMessage = formattingRequests.isEmpty ? "Saved" : "Formatted"
         } catch GoogleDocsServiceError.noChangesToSave {
             hasUnsavedChanges = false
