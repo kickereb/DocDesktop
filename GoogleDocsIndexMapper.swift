@@ -1,6 +1,21 @@
 import Foundation
 
 struct GoogleDocsIndexMapper {
+    func googleRange(for localRange: NSRange, segments: [GoogleDocsTextSegment]) throws -> GoogleDocsTextEdit {
+        let start = try googleBoundaryIndex(for: localRange.location, segments: segments)
+        let endLocation = localRange.length == 0 ? localRange.location : NSMaxRange(localRange)
+        let rawEnd = try googleBoundaryIndex(for: endLocation, segments: segments)
+        let end = safeDeleteEndIndex(rawEnd, for: endLocation, segments: segments)
+        let tabID = try commonTabID(for: localRange, segments: segments)
+
+        return GoogleDocsTextEdit(
+            tabID: tabID,
+            googleStartIndex: start,
+            googleEndIndex: max(start, end),
+            replacementText: ""
+        )
+    }
+
     func edit(from originalText: String, to editedText: String, segments: [GoogleDocsTextSegment]) throws -> GoogleDocsTextEdit {
         guard originalText != editedText else {
             throw GoogleDocsServiceError.noChangesToSave
@@ -72,7 +87,11 @@ struct GoogleDocsIndexMapper {
             }
         }
 
-        throw GoogleDocsServiceError.unsupportedEditRange
+        guard let nearbySegment = nearestSegment(forInsertionAt: localLocation, segments: segments) else {
+            throw GoogleDocsServiceError.unsupportedEditRange
+        }
+
+        return nearbySegment.googleStartIndex
     }
 
     private func googleInsertionIndex(for localLocation: Int, segments: [GoogleDocsTextSegment]) throws -> Int {
@@ -90,7 +109,11 @@ struct GoogleDocsIndexMapper {
             }
         }
 
-        throw GoogleDocsServiceError.unsupportedEditRange
+        guard let nearbySegment = nearestSegment(forInsertionAt: localLocation, segments: segments) else {
+            throw GoogleDocsServiceError.unsupportedEditRange
+        }
+
+        return nearbySegment.googleStartIndex
     }
 
     private func safeDeleteEndIndex(_ googleEnd: Int, for localEnd: Int, segments: [GoogleDocsTextSegment]) -> Int {
@@ -127,6 +150,26 @@ struct GoogleDocsIndexMapper {
             return segment.tabID
         }
 
+        if let nearbySegment = nearestSegment(forInsertionAt: localLocation, segments: segments) {
+            return nearbySegment.tabID
+        }
+
         throw GoogleDocsServiceError.unsupportedEditRange
+    }
+
+    private func nearestSegment(forInsertionAt localLocation: Int, segments: [GoogleDocsTextSegment]) -> GoogleDocsTextSegment? {
+        let sortedSegments = segments.sorted { $0.localRange.location < $1.localRange.location }
+
+        if let nextSegment = sortedSegments.first(where: { localLocation <= $0.localRange.location }) {
+            if let previousSegment = sortedSegments.last(where: { NSMaxRange($0.localRange) <= localLocation }),
+               previousSegment.tabID != nextSegment.tabID {
+                return nil
+            }
+
+            return nextSegment
+        }
+
+        guard let previousSegment = sortedSegments.last else { return nil }
+        return previousSegment
     }
 }

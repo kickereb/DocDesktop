@@ -18,6 +18,59 @@ struct GoogleDocsTextSegment: Equatable {
     let googleStartIndex: Int
     let googleEndIndex: Int
     let tabID: String?
+    let textStyle: GoogleDocsTextRunStyle?
+    let paragraphStyle: GoogleDocsParagraphRunStyle?
+    let listMetadata: GoogleDocsListMetadata?
+
+    init(
+        localRange: NSRange,
+        googleStartIndex: Int,
+        googleEndIndex: Int,
+        tabID: String?,
+        textStyle: GoogleDocsTextRunStyle? = nil,
+        paragraphStyle: GoogleDocsParagraphRunStyle? = nil,
+        listMetadata: GoogleDocsListMetadata? = nil
+    ) {
+        self.localRange = localRange
+        self.googleStartIndex = googleStartIndex
+        self.googleEndIndex = googleEndIndex
+        self.tabID = tabID
+        self.textStyle = textStyle
+        self.paragraphStyle = paragraphStyle
+        self.listMetadata = listMetadata
+    }
+}
+
+struct GoogleDocsTextRunStyle: Equatable {
+    let bold: Bool
+    let italic: Bool
+    let underline: Bool
+    let strikethrough: Bool
+    let linkURL: URL?
+    let fontSize: Double?
+    let fontWeight: Int?
+    let foregroundRed: Double?
+    let foregroundGreen: Double?
+    let foregroundBlue: Double?
+    let baselineOffset: String?
+}
+
+struct GoogleDocsParagraphRunStyle: Equatable {
+    let namedStyleType: String?
+    let alignment: String?
+    let lineSpacing: Double?
+    let spaceAbove: Double?
+    let spaceBelow: Double?
+    let indentStart: Double?
+    let indentEnd: Double?
+    let indentFirstLine: Double?
+}
+
+struct GoogleDocsListMetadata: Equatable {
+    let listID: String?
+    let nestingLevel: Int
+    let glyphType: String?
+    let glyphFormat: String?
 }
 
 struct GoogleDocsTextEdit: Equatable {

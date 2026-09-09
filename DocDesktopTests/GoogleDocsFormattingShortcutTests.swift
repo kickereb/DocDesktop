@@ -93,4 +93,32 @@ struct GoogleDocsFormattingShortcutTests {
         #expect(shortcut?.edit.replacementText == "")
         #expect(shortcut?.formattingRequests == [.numberedList(tabID: nil, startIndex: 1, endIndex: 2)])
     }
+
+    @Test func multiLinePasteRemovesAllMarkersAndCreatesSeparateFormattingRequests() throws {
+        let mapper = GoogleDocsFormattingShortcutMapper()
+        let segments = [GoogleDocsTextSegment(localRange: NSRange(location: 0, length: 1), googleStartIndex: 1, googleEndIndex: 2, tabID: nil)]
+        let pasted = """
+        # Heading one
+
+        ## Heading two
+
+        - Bullet item
+
+        1. Number item
+
+        [ ] Checkbox item
+
+        [Reference](https://example.com)
+
+        """
+
+        let shortcut = mapper.shortcut(from: "\n", to: pasted, segments: segments)
+
+        #expect(shortcut?.normalizedText.contains("#") == false)
+        #expect(shortcut?.normalizedText.contains("[Reference](https://example.com)") == false)
+        #expect(shortcut?.normalizedText.contains("Heading one") == true)
+        #expect(shortcut?.normalizedText.contains("Reference") == true)
+        #expect(shortcut?.formattingRequests.count == 6)
+        #expect(shortcut?.localFormattingRequests.count == 6)
+    }
 }

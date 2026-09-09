@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct ContentView: View {
@@ -8,6 +9,7 @@ struct ContentView: View {
     @State private var isHovering = false
     @State private var showsSetup = false
     @State private var showsDocumentPicker = false
+    @State private var editorSelection = NSRange(location: 0, length: 0)
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,6 +18,14 @@ struct ContentView: View {
 
             Divider()
                 .opacity(isHovering ? 1 : 0)
+
+            if contentViewModel.document != nil, pickerViewModel.selectedDocument?.canEdit == true {
+                formattingToolbar
+                    .opacity(isHovering ? 1 : 0)
+
+                Divider()
+                    .opacity(isHovering ? 1 : 0)
+            }
 
             ZStack(alignment: .top) {
                 documentSurface
@@ -66,11 +76,14 @@ struct ContentView: View {
     private var documentSurface: some View {
         if let document = contentViewModel.document {
             MacAttributedTextView(
-                documentID: "\(document.documentID)-\(document.revisionID ?? "")",
-                text: document.attributedText,
+                documentID: "\(document.documentID)-\(document.revisionID ?? "")-\(contentViewModel.editorVersion)",
+                text: contentViewModel.editorAttributedText,
                 isEditable: pickerViewModel.selectedDocument?.canEdit == true,
                 onTextChange: { newText in
                     contentViewModel.updateEditedText(newText)
+                },
+                onSelectionChange: { range in
+                    editorSelection = range
                 }
             )
         } else if contentViewModel.isLoading {
@@ -79,6 +92,63 @@ struct ContentView: View {
         } else {
             MacTextView(text: $placeholderText)
         }
+    }
+
+    private var formattingToolbar: some View {
+        HStack(spacing: 10) {
+            formattingButton(systemName: "bold", isActive: selectionHasTrait(.boldFontMask)) {
+                contentViewModel.applyFormatting(.bold, selection: editorSelection)
+            }
+
+            formattingButton(systemName: "italic", isActive: selectionHasTrait(.italicFontMask)) {
+                contentViewModel.applyFormatting(.italic, selection: editorSelection)
+            }
+
+            formattingButton(systemName: "underline", isActive: selectionHasAttribute(.underlineStyle)) {
+                contentViewModel.applyFormatting(.underline, selection: editorSelection)
+            }
+
+            formattingButton(systemName: "strikethrough", isActive: selectionHasAttribute(.strikethroughStyle)) {
+                contentViewModel.applyFormatting(.strikethrough, selection: editorSelection)
+            }
+
+            Menu {
+                Button("Normal") { contentViewModel.applyFormatting(.normalText, selection: editorSelection) }
+                Button("Heading 1") { contentViewModel.applyFormatting(.heading(1), selection: editorSelection) }
+                Button("Heading 2") { contentViewModel.applyFormatting(.heading(2), selection: editorSelection) }
+                Button("Heading 3") { contentViewModel.applyFormatting(.heading(3), selection: editorSelection) }
+            } label: {
+                Image(systemName: "textformat.size")
+            }
+            .menuStyle(.borderlessButton)
+            .help("Heading Style")
+
+            formattingButton(systemName: "list.bullet", isActive: false) {
+                contentViewModel.applyFormatting(.bulletList, selection: editorSelection)
+            }
+
+            formattingButton(systemName: "list.number", isActive: false) {
+                contentViewModel.applyFormatting(.numberedList, selection: editorSelection)
+            }
+
+            formattingButton(systemName: "link", isActive: selectionHasAttribute(.link)) {
+                applyLinkFromPrompt()
+            }
+
+            Spacer(minLength: 0)
+        }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 14)
+        .frame(height: 34)
+        .background(.ultraThinMaterial)
+    }
+
+    private func formattingButton(systemName: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .foregroundStyle(isActive ? Color.accentColor : Color.primary)
+        }
+        .help(systemName)
     }
 
     private var header: some View {
@@ -258,6 +328,47 @@ struct ContentView: View {
     private func openSelectedDocument() {
         guard let url = pickerViewModel.selectedDocument?.webViewLink else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    private func applyLinkFromPrompt() {
+        let alert = NSAlert()
+        alert.messageText = "Link URL"
+        alert.informativeText = "Enter a URL for the selected text."
+        alert.addButton(withTitle: "Apply")
+        alert.addButton(withTitle: "Cancel")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        field.placeholderString = "https://example.com"
+        alert.accessoryView = field
+
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let url = URL(string: field.stringValue),
+              !field.stringValue.isEmpty else { return }
+
+        contentViewModel.applyFormatting(.link(url), selection: editorSelection)
+    }
+
+    private func selectionHasTrait(_ trait: NSFontTraitMask) -> Bool {
+        let text = contentViewModel.editorAttributedText
+        let index = attributeIndex(in: text)
+        guard index < text.length,
+              let font = text.attribute(.font, at: index, effectiveRange: nil) as? NSFont else {
+            return false
+        }
+
+        return font.fontDescriptor.symbolicTraits.contains(trait == .boldFontMask ? .bold : .italic)
+    }
+
+    private func selectionHasAttribute(_ key: NSAttributedString.Key) -> Bool {
+        let text = contentViewModel.editorAttributedText
+        let index = attributeIndex(in: text)
+        guard index < text.length else { return false }
+        return text.attribute(key, at: index, effectiveRange: nil) != nil
+    }
+
+    private func attributeIndex(in text: NSAttributedString) -> Int {
+        guard text.length > 0 else { return 0 }
+        return min(max(0, editorSelection.location), text.length - 1)
     }
 }
 

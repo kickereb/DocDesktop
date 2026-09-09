@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -10,6 +11,8 @@ final class DocumentContentViewModel {
     private(set) var statusMessage = "No document loaded"
     private(set) var errorMessage: String?
     private(set) var editedText = ""
+    private(set) var editorAttributedText = NSAttributedString()
+    private(set) var editorVersion = 0
     private(set) var hasUnsavedChanges = false
 
     @ObservationIgnored private let docsService: GoogleDocsService
@@ -18,6 +21,7 @@ final class DocumentContentViewModel {
     @ObservationIgnored private let syncPolicy = DocumentSyncPolicy()
     @ObservationIgnored private var autosaveTask: Task<Void, Never>?
     @ObservationIgnored private var syncTask: Task<Void, Never>?
+    @ObservationIgnored private var pendingFormattingRequests: [GoogleDocsFormattingRequest] = []
     private var selectedDocument: SelectedDocument?
 
     init(docsService: GoogleDocsService = GoogleDocsService()) {
@@ -37,6 +41,8 @@ final class DocumentContentViewModel {
         guard let selectedDocument else {
             document = nil
             editedText = ""
+            editorAttributedText = NSAttributedString()
+            editorVersion += 1
             hasUnsavedChanges = false
             statusMessage = "No document selected"
             errorMessage = nil
@@ -56,6 +62,8 @@ final class DocumentContentViewModel {
         } catch {
             document = nil
             editedText = ""
+            editorAttributedText = NSAttributedString()
+            editorVersion += 1
             hasUnsavedChanges = false
             statusMessage = "Document load failed"
             errorMessage = error.localizedDescription
@@ -93,8 +101,24 @@ final class DocumentContentViewModel {
     }
 
     func updateEditedText(_ text: String) {
-        editedText = text
-        guard let document, text != document.plainText else {
+        guard let document else {
+            editedText = text
+            return
+        }
+
+        if let shortcut = shortcutMapper.shortcut(from: document.plainText, to: text, segments: document.textSegments) {
+            editedText = shortcut.normalizedText
+            pendingFormattingRequests = shortcut.formattingRequests
+            editorAttributedText = locallyFormattedText(
+                baseText: shortcut.normalizedText,
+                formattingRequests: shortcut.localFormattingRequests
+            )
+            editorVersion += 1
+        } else {
+            editedText = text
+        }
+
+        guard editedText != document.plainText || !pendingFormattingRequests.isEmpty else {
             hasUnsavedChanges = false
             return
         }
@@ -108,6 +132,36 @@ final class DocumentContentViewModel {
     func saveNow() async {
         autosaveTask?.cancel()
         await savePendingChanges()
+    }
+
+    func applyFormatting(_ command: GoogleDocsToolbarFormattingCommand, selection: NSRange) {
+        guard let document else { return }
+
+        let selectedRange = clampedNonEmptyRange(selection, in: editedText)
+        guard selectedRange.length > 0 else {
+            statusMessage = "Select text"
+            errorMessage = nil
+            return
+        }
+
+        do {
+            let googleRange = try indexMapper.googleRange(for: selectedRange, segments: document.textSegments)
+            let remoteRequest = remoteFormattingRequest(for: command, googleRange: googleRange)
+            let localRequest = localFormattingRequest(for: command, range: selectedRange)
+            pendingFormattingRequests.append(remoteRequest)
+
+            let mutableText = NSMutableAttributedString(attributedString: editorAttributedText)
+            apply(localRequest, to: mutableText)
+            editorAttributedText = mutableText
+            editorVersion += 1
+            hasUnsavedChanges = true
+            errorMessage = nil
+            statusMessage = "Unsaved format"
+            scheduleAutosave()
+        } catch {
+            statusMessage = "Format failed"
+            errorMessage = GoogleDocsServiceError.unsupportedEditRange.localizedDescription
+        }
     }
 
     private func scheduleAutosave() {
@@ -131,16 +185,15 @@ final class DocumentContentViewModel {
             return
         }
 
-        guard editedText != document.plainText else {
+        guard editedText != document.plainText || !pendingFormattingRequests.isEmpty else {
             hasUnsavedChanges = false
             statusMessage = "Saved"
             return
         }
 
         do {
-            let shortcut = shortcutMapper.shortcut(from: document.plainText, to: editedText, segments: document.textSegments)
-            let edit = try shortcut?.edit ?? indexMapper.edit(from: document.plainText, to: editedText, segments: document.textSegments)
-            let formattingRequests = shortcut?.formattingRequests ?? []
+            let edit = try editForSave(from: document)
+            let formattingRequests = pendingFormattingRequests
             isSaving = true
             statusMessage = formattingRequests.isEmpty ? "Saving" : "Saving format"
             errorMessage = nil
@@ -153,6 +206,7 @@ final class DocumentContentViewModel {
             let refreshedDocument = try await docsService.loadDocument(id: document.documentID)
             replaceDocumentIfSafe(refreshedDocument)
             hasUnsavedChanges = false
+            pendingFormattingRequests = []
             statusMessage = formattingRequests.isEmpty ? "Saved" : "Formatted"
         } catch GoogleDocsServiceError.noChangesToSave {
             hasUnsavedChanges = false
@@ -169,6 +223,157 @@ final class DocumentContentViewModel {
         guard !hasUnsavedChanges else { return }
         document = loadedDocument
         editedText = loadedDocument.plainText
+        editorAttributedText = loadedDocument.attributedText
+        editorVersion += 1
+        pendingFormattingRequests = []
+    }
+
+    private func locallyFormattedText(baseText: String, formattingRequests: [GoogleDocsLocalFormattingRequest]) -> NSAttributedString {
+        let output = NSMutableAttributedString(
+            string: baseText,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 16),
+                .foregroundColor: NSColor.white
+            ]
+        )
+
+        for request in formattingRequests {
+            apply(request, to: output)
+        }
+
+        return output
+    }
+
+    private func apply(_ request: GoogleDocsLocalFormattingRequest, to text: NSMutableAttributedString) {
+        switch request {
+        case .heading(let level, let range):
+            let size: CGFloat = level == 1 ? 30 : level == 2 ? 25 : 21
+            text.addAttributes([.font: NSFont.boldSystemFont(ofSize: size)], range: safeRange(range, in: text))
+        case .normalText(let range):
+            let safeRange = safeRange(range, in: text)
+            text.addAttributes([.font: NSFont.systemFont(ofSize: 16), .foregroundColor: NSColor.white], range: safeRange)
+            text.removeAttribute(.link, range: safeRange)
+        case .bulletList(let range):
+            applyList(.disc, to: text, range: range)
+        case .numberedList(let range):
+            applyList(.decimal, to: text, range: range)
+        case .checkboxList(let range):
+            applyList(.check, to: text, range: range)
+        case .link(let url, let range):
+            text.addAttributes([
+                .link: url,
+                .foregroundColor: NSColor.systemBlue,
+                .underlineStyle: NSUnderlineStyle.single.rawValue
+            ], range: safeRange(range, in: text))
+        case .textStyle(let range, let bold, let italic, let underline, let strikethrough):
+            let safeRange = safeRange(range, in: text)
+            if bold == true || italic == true {
+                text.enumerateAttribute(.font, in: safeRange) { value, subrange, _ in
+                    let currentFont = value as? NSFont ?? NSFont.systemFont(ofSize: 16)
+                    var newFont = currentFont
+                    if bold == true {
+                        newFont = NSFontManager.shared.convert(newFont, toHaveTrait: .boldFontMask)
+                    }
+                    if italic == true {
+                        newFont = NSFontManager.shared.convert(newFont, toHaveTrait: .italicFontMask)
+                    }
+                    text.addAttribute(.font, value: newFont, range: subrange)
+                }
+            }
+            if underline == true {
+                text.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: safeRange)
+            }
+            if strikethrough == true {
+                text.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: safeRange)
+            }
+        }
+    }
+
+    private func applyList(_ markerFormat: NSTextList.MarkerFormat, to text: NSMutableAttributedString, range: NSRange) {
+        let clampedRange = safeRange(range, in: text)
+        let fullRange = (text.string as NSString).lineRange(for: clampedRange)
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.textLists = [NSTextList(markerFormat: markerFormat, options: [], startingItemNumber: 1)]
+        paragraphStyle.headIndent = 28
+        paragraphStyle.firstLineHeadIndent = 0
+        paragraphStyle.paragraphSpacing = 4
+        text.addAttribute(.paragraphStyle, value: paragraphStyle, range: safeRange(fullRange, in: text))
+    }
+
+    private func safeRange(_ range: NSRange, in text: NSAttributedString) -> NSRange {
+        let location = min(max(0, range.location), text.length)
+        let maxLength = max(0, text.length - location)
+        return NSRange(location: location, length: min(range.length, maxLength))
+    }
+
+    private func editForSave(from document: GoogleDocsDocument) throws -> GoogleDocsTextEdit {
+        if editedText == document.plainText {
+            guard let firstSegment = document.textSegments.first else {
+                throw GoogleDocsServiceError.unsupportedEditRange
+            }
+
+            return GoogleDocsTextEdit(
+                tabID: firstSegment.tabID,
+                googleStartIndex: firstSegment.googleStartIndex,
+                googleEndIndex: firstSegment.googleStartIndex,
+                replacementText: ""
+            )
+        }
+
+        return try indexMapper.edit(from: document.plainText, to: editedText, segments: document.textSegments)
+    }
+
+    private func clampedNonEmptyRange(_ range: NSRange, in text: String) -> NSRange {
+        let length = (text as NSString).length
+        let location = min(max(0, range.location), length)
+        let maxLength = max(0, length - location)
+        return NSRange(location: location, length: min(max(0, range.length), maxLength))
+    }
+
+    private func remoteFormattingRequest(for command: GoogleDocsToolbarFormattingCommand, googleRange: GoogleDocsTextEdit) -> GoogleDocsFormattingRequest {
+        switch command {
+        case .bold:
+            return .textStyle(tabID: googleRange.tabID, startIndex: googleRange.googleStartIndex, endIndex: googleRange.googleEndIndex, bold: true)
+        case .italic:
+            return .textStyle(tabID: googleRange.tabID, startIndex: googleRange.googleStartIndex, endIndex: googleRange.googleEndIndex, italic: true)
+        case .underline:
+            return .textStyle(tabID: googleRange.tabID, startIndex: googleRange.googleStartIndex, endIndex: googleRange.googleEndIndex, underline: true)
+        case .strikethrough:
+            return .textStyle(tabID: googleRange.tabID, startIndex: googleRange.googleStartIndex, endIndex: googleRange.googleEndIndex, strikethrough: true)
+        case .normalText:
+            return .normalText(tabID: googleRange.tabID, startIndex: googleRange.googleStartIndex, endIndex: googleRange.googleEndIndex)
+        case .heading(let level):
+            return .heading(level: level, tabID: googleRange.tabID, startIndex: googleRange.googleStartIndex, endIndex: googleRange.googleEndIndex)
+        case .bulletList:
+            return .bulletList(tabID: googleRange.tabID, startIndex: googleRange.googleStartIndex, endIndex: googleRange.googleEndIndex)
+        case .numberedList:
+            return .numberedList(tabID: googleRange.tabID, startIndex: googleRange.googleStartIndex, endIndex: googleRange.googleEndIndex)
+        case .link(let url):
+            return .link(url: url, tabID: googleRange.tabID, startIndex: googleRange.googleStartIndex, endIndex: googleRange.googleEndIndex)
+        }
+    }
+
+    private func localFormattingRequest(for command: GoogleDocsToolbarFormattingCommand, range: NSRange) -> GoogleDocsLocalFormattingRequest {
+        switch command {
+        case .bold:
+            return .textStyle(range: range, bold: true)
+        case .italic:
+            return .textStyle(range: range, italic: true)
+        case .underline:
+            return .textStyle(range: range, underline: true)
+        case .strikethrough:
+            return .textStyle(range: range, strikethrough: true)
+        case .normalText:
+            return .normalText(range: range)
+        case .heading(let level):
+            return .heading(level: level, range: range)
+        case .bulletList:
+            return .bulletList(range: range)
+        case .numberedList:
+            return .numberedList(range: range)
+        case .link(let url):
+            return .link(url: url, range: range)
+        }
     }
 
     private func startRemoteSync() {

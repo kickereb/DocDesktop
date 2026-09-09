@@ -6,9 +6,10 @@ struct MacAttributedTextView: NSViewRepresentable {
     let text: NSAttributedString
     let isEditable: Bool
     let onTextChange: (String) -> Void
+    let onSelectionChange: (NSRange) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onTextChange: onTextChange)
+        Coordinator(onTextChange: onTextChange, onSelectionChange: onSelectionChange)
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -63,15 +64,22 @@ struct MacAttributedTextView: NSViewRepresentable {
         var loadedDocumentID: String?
         var currentText = ""
         private let onTextChange: (String) -> Void
+        private let onSelectionChange: (NSRange) -> Void
 
-        init(onTextChange: @escaping (String) -> Void) {
+        init(onTextChange: @escaping (String) -> Void, onSelectionChange: @escaping (NSRange) -> Void) {
             self.onTextChange = onTextChange
+            self.onSelectionChange = onSelectionChange
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             currentText = textView.string
             onTextChange(textView.string)
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            onSelectionChange(textView.selectedRange())
         }
     }
 }

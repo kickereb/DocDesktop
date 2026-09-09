@@ -172,6 +172,14 @@ private enum BatchRequest: Encodable {
                     fields: "namedStyleType"
                 )
             )
+        case .normalText(let tabID, let startIndex, let endIndex):
+            self = .updateParagraphStyle(
+                UpdateParagraphStyleRequest(
+                    range: EditRange(startIndex: startIndex, endIndex: endIndex, tabID: tabID),
+                    paragraphStyle: ParagraphStylePayload(namedStyleType: "NORMAL_TEXT"),
+                    fields: "namedStyleType"
+                )
+            )
         case .bulletList(let tabID, let startIndex, let endIndex):
             self = .createParagraphBullets(
                 CreateParagraphBulletsRequest(range: EditRange(startIndex: startIndex, endIndex: endIndex, tabID: tabID), bulletPreset: "BULLET_DISC_CIRCLE_SQUARE")
@@ -190,6 +198,26 @@ private enum BatchRequest: Encodable {
                     range: EditRange(startIndex: startIndex, endIndex: endIndex, tabID: tabID),
                     textStyle: TextStylePayload(link: LinkPayload(url: url.absoluteString)),
                     fields: "link"
+                )
+            )
+        case .textStyle(let tabID, let startIndex, let endIndex, let bold, let italic, let underline, let strikethrough):
+            self = .updateTextStyle(
+                UpdateTextStyleRequest(
+                    range: EditRange(startIndex: startIndex, endIndex: endIndex, tabID: tabID),
+                    textStyle: TextStylePayload(
+                        link: nil,
+                        bold: bold,
+                        italic: italic,
+                        underline: underline,
+                        strikethrough: strikethrough
+                    ),
+                    fields: textStyleFields(
+                        bold: bold,
+                        italic: italic,
+                        underline: underline,
+                        strikethrough: strikethrough,
+                        link: false
+                    )
                 )
             )
         }
@@ -252,11 +280,39 @@ private struct UpdateTextStyleRequest: Encodable {
 }
 
 private struct TextStylePayload: Encodable {
-    let link: LinkPayload
+    let link: LinkPayload?
+    let bold: Bool?
+    let italic: Bool?
+    let underline: Bool?
+    let strikethrough: Bool?
+
+    init(link: LinkPayload? = nil, bold: Bool? = nil, italic: Bool? = nil, underline: Bool? = nil, strikethrough: Bool? = nil) {
+        self.link = link
+        self.bold = bold
+        self.italic = italic
+        self.underline = underline
+        self.strikethrough = strikethrough
+    }
 }
 
 private struct LinkPayload: Encodable {
     let url: String
+}
+
+private func textStyleFields(
+    bold: Bool?,
+    italic: Bool?,
+    underline: Bool?,
+    strikethrough: Bool?,
+    link: Bool
+) -> String {
+    var fields: [String] = []
+    if bold != nil { fields.append("bold") }
+    if italic != nil { fields.append("italic") }
+    if underline != nil { fields.append("underline") }
+    if strikethrough != nil { fields.append("strikethrough") }
+    if link { fields.append("link") }
+    return fields.joined(separator: ",")
 }
 
 private struct EditRange: Encodable {

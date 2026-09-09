@@ -55,4 +55,28 @@ struct GoogleDocsIndexMapperTests {
         #expect(edit.googleEndIndex == 6)
         #expect(edit.replacementText == "")
     }
+
+    @Test func insertInDisplayOnlyGapUsesNextEditableTextRun() throws {
+        let mapper = GoogleDocsIndexMapper()
+        let segments = [
+            GoogleDocsTextSegment(localRange: NSRange(location: 2, length: 5), googleStartIndex: 10, googleEndIndex: 15, tabID: nil)
+        ]
+
+        let edit = try mapper.edit(from: "• Item", to: "•  Item", segments: segments)
+
+        #expect(edit.googleStartIndex == 10)
+        #expect(edit.googleEndIndex == 10)
+        #expect(edit.replacementText == " ")
+    }
+
+    @Test func deleteInDisplayOnlyGapStaysUnsupported() throws {
+        let mapper = GoogleDocsIndexMapper()
+        let segments = [
+            GoogleDocsTextSegment(localRange: NSRange(location: 2, length: 5), googleStartIndex: 10, googleEndIndex: 15, tabID: nil)
+        ]
+
+        #expect(throws: GoogleDocsServiceError.self) {
+            _ = try mapper.edit(from: "• Item", to: "Item", segments: segments)
+        }
+    }
 }
