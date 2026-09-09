@@ -3,6 +3,7 @@ import SwiftUI
 
 final class DesktopWindowController: NSWindowController, NSWindowDelegate {
     private let stateStore = WindowStateStore()
+    var onHide: (() -> Void)?
 
     init() {
         let contentView = ContentView()
@@ -22,9 +23,9 @@ final class DesktopWindowController: NSWindowController, NSWindowDelegate {
         window.isFloatingPanel = false
         window.becomesKeyOnlyIfNeeded = false
         window.worksWhenModal = true
-        window.minSize = NSSize(width: 320, height: 360)
-        window.level = Self.desktopWidgetLevel
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .transient, .ignoresCycle, .fullScreenNone]
+        window.minSize = NSSize(width: 420, height: 400)
+        window.level = .floating
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = true
@@ -36,6 +37,9 @@ final class DesktopWindowController: NSWindowController, NSWindowDelegate {
         window.delegate = self
         window.prepareForInteraction = { [weak self] in
             self?.prepareForInteraction()
+        }
+        window.hideOverlay = { [weak self] in
+            self?.hideOverlay()
         }
         hideTitleBarButtons(in: window)
     }
@@ -51,17 +55,30 @@ final class DesktopWindowController: NSWindowController, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
-    func popUpForShortcut() {
+    func showOverlay() {
         guard let window else { return }
         window.level = .floating
+        window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         NSApp.activate(ignoringOtherApps: true)
+        centerIfNeeded(window)
         window.makeKeyAndOrderFront(nil)
+        window.makeMain()
+
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .focusDocumentEditor, object: nil)
+        }
     }
 
-    func returnToDesktopLevel() {
+    func hideOverlay() {
         guard let window else { return }
-        window.level = Self.desktopWidgetLevel
-        window.orderFrontRegardless()
+        saveWindowFrame()
+        NotificationCenter.default.post(name: .saveDocumentNow, object: nil)
+        window.orderOut(nil)
+        onHide?()
+    }
+
+    var isOverlayVisible: Bool {
+        window?.isVisible == true
     }
 
     func windowDidMove(_ notification: Notification) {
@@ -87,7 +104,8 @@ final class DesktopWindowController: NSWindowController, NSWindowDelegate {
         window.standardWindowButton(.zoomButton)?.isHidden = true
     }
 
-    private static var desktopWidgetLevel: NSWindow.Level {
-        NSWindow.Level(Int(CGWindowLevelForKey(.desktopIconWindow)))
+    private func centerIfNeeded(_ window: NSWindow) {
+        guard !stateStore.hasSavedFrame else { return }
+        window.center()
     }
 }

@@ -70,6 +70,12 @@ struct ContentView: View {
             showsDocumentPicker = true
             Task { await pickerViewModel.refresh() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .saveDocumentNow)) { _ in
+            Task { await contentViewModel.saveNow() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .hideDocumentOverlay)) { _ in
+            NSApp.sendAction(#selector(AppDelegate.hideDocumentWindow), to: nil, from: nil)
+        }
     }
 
     @ViewBuilder

@@ -44,9 +44,23 @@ struct MacAttributedTextView: NSViewRepresentable {
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
+        context.coordinator.focusObserver = NotificationCenter.default.addObserver(
+            forName: .focusDocumentEditor,
+            object: nil,
+            queue: .main
+        ) { [weak textView] _ in
+            guard let textView else { return }
+            textView.window?.makeFirstResponder(textView)
+        }
 
         scrollView.documentView = textView
         return scrollView
+    }
+
+    static func dismantleNSView(_ scrollView: NSScrollView, coordinator: Coordinator) {
+        if let focusObserver = coordinator.focusObserver {
+            NotificationCenter.default.removeObserver(focusObserver)
+        }
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
@@ -66,6 +80,7 @@ struct MacAttributedTextView: NSViewRepresentable {
         var loadedDocumentID: String?
         var currentText = ""
         var isApplyingProgrammaticText = false
+        var focusObserver: NSObjectProtocol?
         private let onTextChange: (String) -> Void
         private let onSelectionChange: (NSRange) -> Void
 

@@ -46,6 +46,10 @@ struct GoogleDocsService {
         documentID: String,
         revisionID: String?
     ) async throws {
+        guard edit.googleEndIndex > edit.googleStartIndex || !edit.replacementText.isEmpty || !formattingRequests.isEmpty else {
+            throw GoogleDocsServiceError.noChangesToSave
+        }
+
         let url = baseURL.appending(path: "documents/\(documentID):batchUpdate")
         let accessToken = try await authManager.validAccessToken()
         var request = URLRequest(url: url)
@@ -149,6 +153,11 @@ private struct BatchUpdateRequest: Encodable {
         }
 
         requests.append(contentsOf: formattingRequests.map(BatchRequest.init(formattingRequest:)))
+        if requests.isEmpty {
+            self.requests = []
+            self.writeControl = nil
+            return
+        }
 
         self.requests = requests
         self.writeControl = revisionID.map { WriteControl(targetRevisionId: $0) }

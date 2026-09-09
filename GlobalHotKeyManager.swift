@@ -32,7 +32,7 @@ final class GlobalHotKeyManager {
         var hotKeyID = EventHotKeyID(signature: 0x4444484B, id: 1)
         RegisterEventHotKey(
             UInt32(kVK_ANSI_D),
-            UInt32(optionKey),
+            UInt32(cmdKey | shiftKey),
             hotKeyID,
             GetApplicationEventTarget(),
             0,

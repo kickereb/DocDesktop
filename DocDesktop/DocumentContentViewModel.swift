@@ -22,6 +22,7 @@ final class DocumentContentViewModel {
     @ObservationIgnored private var autosaveTask: Task<Void, Never>?
     @ObservationIgnored private var syncTask: Task<Void, Never>?
     @ObservationIgnored private var pendingFormattingRequests: [GoogleDocsFormattingRequest] = []
+    @ObservationIgnored private let localDraftPrefix = "localMarkdownDraft."
     private var selectedDocument: SelectedDocument?
 
     init(docsService: GoogleDocsService = GoogleDocsService()) {
@@ -56,9 +57,12 @@ final class DocumentContentViewModel {
         do {
             let loadedDocument = try await docsService.loadDocument(id: selectedDocument.id)
             replaceDocumentIfSafe(loadedDocument)
+            applyLocalDraftIfNeeded(for: selectedDocument.id)
             hasUnsavedChanges = false
-            statusMessage = selectedDocument.canEdit ? "Loaded" : "Loaded read-only"
-            startRemoteSync()
+            statusMessage = AppDevelopmentMode.localMarkdownEngineOnly ? "Local editor mode" : selectedDocument.canEdit ? "Loaded" : "Loaded read-only"
+            if !AppDevelopmentMode.localMarkdownEngineOnly {
+                startRemoteSync()
+            }
         } catch {
             document = nil
             editedText = ""
@@ -125,7 +129,13 @@ final class DocumentContentViewModel {
 
         hasUnsavedChanges = true
         errorMessage = nil
-        statusMessage = "Unsaved"
+        statusMessage = AppDevelopmentMode.localMarkdownEngineOnly ? "Local draft" : "Unsaved"
+
+        if AppDevelopmentMode.localMarkdownEngineOnly {
+            saveLocalDraft()
+            return
+        }
+
         scheduleAutosave()
     }
 
@@ -156,7 +166,11 @@ final class DocumentContentViewModel {
             editorVersion += 1
             hasUnsavedChanges = true
             errorMessage = nil
-            statusMessage = "Unsaved format"
+            statusMessage = AppDevelopmentMode.localMarkdownEngineOnly ? "Local draft" : "Unsaved format"
+            if AppDevelopmentMode.localMarkdownEngineOnly {
+                saveLocalDraft()
+                return
+            }
             scheduleAutosave()
         } catch {
             statusMessage = "Format failed"
@@ -174,6 +188,14 @@ final class DocumentContentViewModel {
     }
 
     private func savePendingChanges() async {
+        if AppDevelopmentMode.localMarkdownEngineOnly {
+            saveLocalDraft()
+            hasUnsavedChanges = false
+            statusMessage = "Local draft saved"
+            errorMessage = nil
+            return
+        }
+
         guard let selectedDocument, let document else {
             errorMessage = GoogleDocsServiceError.noDocumentLoaded.localizedDescription
             return
@@ -226,6 +248,33 @@ final class DocumentContentViewModel {
         editorAttributedText = loadedDocument.attributedText
         editorVersion += 1
         pendingFormattingRequests = []
+    }
+
+    private func applyLocalDraftIfNeeded(for documentID: String) {
+        guard AppDevelopmentMode.localMarkdownEngineOnly,
+              let draft = UserDefaults.standard.string(forKey: localDraftKey(for: documentID)),
+              !draft.isEmpty else {
+            return
+        }
+
+        editedText = draft
+        editorAttributedText = NSAttributedString(
+            string: draft,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 16),
+                .foregroundColor: NSColor.white
+            ]
+        )
+        editorVersion += 1
+    }
+
+    private func saveLocalDraft() {
+        guard let document else { return }
+        UserDefaults.standard.set(editedText, forKey: localDraftKey(for: document.documentID))
+    }
+
+    private func localDraftKey(for documentID: String) -> String {
+        localDraftPrefix + documentID
     }
 
     private func locallyFormattedText(baseText: String, formattingRequests: [GoogleDocsLocalFormattingRequest]) -> NSAttributedString {

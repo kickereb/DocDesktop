@@ -5,16 +5,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var desktopWindowController: DesktopWindowController?
     private var globalHotKeyManager: GlobalHotKeyManager?
+    private weak var previousApplication: NSRunningApplication?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.regular)
+        NSApp.setActivationPolicy(.accessory)
         configureMenuBarItem()
         configureGlobalHotKey()
-        showDocumentWindow()
-    }
-
-    func applicationDidResignActive(_ notification: Notification) {
-        desktopWindowController?.returnToDesktopLevel()
+        _ = ensureOverlayController()
     }
 
     private func configureGlobalHotKey() {
@@ -30,9 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.image?.isTemplate = true
 
         let menu = NSMenu()
-        menu.addItem(menuItem(title: "Pop Up Document", action: #selector(popUpDocumentWindow), keyEquivalent: "d", modifiers: [.option]))
-        menu.addItem(menuItem(title: "Show On Desktop", action: #selector(showDocumentWindow)))
-        menu.addItem(menuItem(title: "Hide Document", action: #selector(hideDocumentWindow)))
+        menu.addItem(menuItem(title: "Show DocDesktop", action: #selector(showDocumentWindow), keyEquivalent: "d", modifiers: [.command, .shift]))
+        menu.addItem(menuItem(title: "Hide DocDesktop", action: #selector(hideDocumentWindow)))
         menu.addItem(menuItem(title: "Change Document", action: #selector(changeDocument)))
         menu.addItem(menuItem(title: "Refresh", action: #selector(refreshDocuments)))
         menu.addItem(menuItem(title: "Open in Google Docs", action: #selector(openInGoogleDocs)))
@@ -65,27 +61,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func showDocumentWindow() {
-        if desktopWindowController == nil {
-            desktopWindowController = DesktopWindowController()
-        }
-
-        desktopWindowController?.returnToDesktopLevel()
+        previousApplication = NSWorkspace.shared.frontmostApplication
+        showOverlay()
     }
 
     @objc private func popUpDocumentWindow() {
-        if desktopWindowController == nil {
-            desktopWindowController = DesktopWindowController()
-        }
-
-        desktopWindowController?.popUpForShortcut()
+        toggleOverlay()
     }
 
     @objc func hideDocumentWindow() {
-        desktopWindowController?.window?.orderOut(nil)
+        hideOverlay()
     }
 
     @objc private func changeDocument() {
-        popUpDocumentWindow()
+        showOverlay()
         NotificationCenter.default.post(name: .showDocumentPicker, object: nil)
     }
 
@@ -105,5 +94,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    private func toggleOverlay() {
+        let controller = ensureOverlayController()
+        if controller.isOverlayVisible {
+            hideOverlay()
+        } else {
+            previousApplication = NSWorkspace.shared.frontmostApplication
+            showOverlay()
+        }
+    }
+
+    private func showOverlay() {
+        ensureOverlayController().showOverlay()
+    }
+
+    private func hideOverlay() {
+        desktopWindowController?.hideOverlay()
+    }
+
+    private func ensureOverlayController() -> DesktopWindowController {
+        if let desktopWindowController {
+            return desktopWindowController
+        }
+
+        let controller = DesktopWindowController()
+        controller.onHide = { [weak self] in
+            self?.restorePreviousApplication()
+        }
+        desktopWindowController = controller
+        return controller
+    }
+
+    private func restorePreviousApplication() {
+        guard let previousApplication,
+              !previousApplication.isTerminated,
+              previousApplication.bundleIdentifier != Bundle.main.bundleIdentifier else {
+            return
+        }
+
+        previousApplication.activate(options: [])
+        self.previousApplication = nil
     }
 }
