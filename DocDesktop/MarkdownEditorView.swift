@@ -126,6 +126,8 @@ struct MarkdownEditorView: NSViewRepresentable {
 }
 
 private final class MarkdownNSTextView: NSTextView {
+    private let editingEngine = MarkdownEditingEngine()
+
     override var acceptsFirstResponder: Bool { true }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
@@ -134,6 +136,10 @@ private final class MarkdownNSTextView: NSTextView {
 
     override func mouseDown(with event: NSEvent) {
         activateWindowForEditing()
+        if let replacement = checkboxReplacement(for: event) {
+            applyReplacement(replacement)
+            return
+        }
         super.mouseDown(with: event)
     }
 
@@ -142,9 +148,50 @@ private final class MarkdownNSTextView: NSTextView {
         super.scrollWheel(with: event)
     }
 
+    override func keyDown(with event: NSEvent) {
+        if isReturnKey(event),
+           let replacement = editingEngine.replacementForReturn(in: string, selectedRange: selectedRange()) {
+            applyReplacement(replacement)
+            return
+        }
+
+        if isTabKey(event),
+           let replacement = editingEngine.replacementForTab(
+            in: string,
+            selectedRange: selectedRange(),
+            outdent: event.modifierFlags.contains(.shift)
+           ) {
+            applyReplacement(replacement)
+            return
+        }
+
+        super.keyDown(with: event)
+    }
+
     private func activateWindowForEditing() {
         guard let window else { return }
         window.makeKey()
         window.makeFirstResponder(self)
+    }
+
+    private func isReturnKey(_ event: NSEvent) -> Bool {
+        event.charactersIgnoringModifiers == "\r" || event.charactersIgnoringModifiers == "\n"
+    }
+
+    private func isTabKey(_ event: NSEvent) -> Bool {
+        event.keyCode == 48
+    }
+
+    private func checkboxReplacement(for event: NSEvent) -> MarkdownEditingEngine.TextReplacement? {
+        let point = convert(event.locationInWindow, from: nil)
+        let insertionIndex = characterIndexForInsertion(at: point)
+        return editingEngine.replacementForCheckboxToggle(in: string, location: insertionIndex)
+    }
+
+    private func applyReplacement(_ replacement: MarkdownEditingEngine.TextReplacement) {
+        guard shouldChangeText(in: replacement.range, replacementString: replacement.text) else { return }
+        textStorage?.replaceCharacters(in: replacement.range, with: replacement.text)
+        didChangeText()
+        setSelectedRange(replacement.selectedRange)
     }
 }

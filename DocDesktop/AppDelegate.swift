@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.addItem(menuItem(title: "Show DocDesktop", action: #selector(showDocumentWindow), keyEquivalent: "d", modifiers: [.command, .shift]))
         menu.addItem(menuItem(title: "Hide DocDesktop", action: #selector(hideDocumentWindow)))
+        menu.addItem(menuItem(title: "New Local File", action: #selector(newLocalFile), keyEquivalent: "n", modifiers: [.command]))
         menu.addItem(menuItem(title: "Change Document", action: #selector(changeDocument)))
         menu.addItem(menuItem(title: "Refresh", action: #selector(refreshDocuments)))
         menu.addItem(menuItem(title: "Open in Google Docs", action: #selector(openInGoogleDocs)))
@@ -78,6 +79,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NotificationCenter.default.post(name: .showDocumentPicker, object: nil)
     }
 
+    @objc private func newLocalFile() {
+        showOverlay()
+        NotificationCenter.default.post(name: .newLocalMarkdownFile, object: nil)
+    }
+
     @objc private func refreshDocuments() {
         NotificationCenter.default.post(name: .showDocumentPicker, object: nil)
     }
@@ -90,6 +96,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func signOut() {
         GoogleAuthManager.shared.signOut()
         ActiveDocumentStore().clear()
+        if AppDevelopmentMode.localMarkdownEngineOnly {
+            NotificationCenter.default.post(name: .newLocalMarkdownFile, object: nil)
+        }
     }
 
     @objc private func quit() {

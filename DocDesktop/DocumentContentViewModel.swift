@@ -23,6 +23,7 @@ final class DocumentContentViewModel {
     @ObservationIgnored private var syncTask: Task<Void, Never>?
     @ObservationIgnored private var pendingFormattingRequests: [GoogleDocsFormattingRequest] = []
     @ObservationIgnored private let localDraftPrefix = "localMarkdownDraft."
+    @ObservationIgnored private let localScratchDocumentID = "local-markdown-scratch"
     private var selectedDocument: SelectedDocument?
 
     init(docsService: GoogleDocsService = GoogleDocsService()) {
@@ -40,13 +41,17 @@ final class DocumentContentViewModel {
         self.selectedDocument = selectedDocument
 
         guard let selectedDocument else {
-            document = nil
-            editedText = ""
-            editorAttributedText = NSAttributedString()
-            editorVersion += 1
-            hasUnsavedChanges = false
-            statusMessage = "No document selected"
-            errorMessage = nil
+            if AppDevelopmentMode.localMarkdownEngineOnly {
+                loadLocalMarkdownScratch()
+            } else {
+                document = nil
+                editedText = ""
+                editorAttributedText = NSAttributedString()
+                editorVersion += 1
+                hasUnsavedChanges = false
+                statusMessage = "No document selected"
+                errorMessage = nil
+            }
             return
         }
 
@@ -74,6 +79,30 @@ final class DocumentContentViewModel {
         }
 
         isLoading = false
+    }
+
+    func loadLocalMarkdownScratch() {
+        autosaveTask?.cancel()
+        syncTask?.cancel()
+        selectedDocument = nil
+
+        let draft = UserDefaults.standard.string(forKey: localDraftKey(for: localScratchDocumentID)) ?? Self.defaultLocalMarkdown
+        let styledText = MarkdownStyler().attributedString(for: draft)
+        document = GoogleDocsDocument(
+            documentID: localScratchDocumentID,
+            title: "Local Markdown Note",
+            revisionID: nil,
+            attributedText: styledText,
+            textSegments: []
+        )
+        editedText = draft
+        editorAttributedText = styledText
+        editorVersion += 1
+        hasUnsavedChanges = false
+        isLoading = false
+        isSaving = false
+        statusMessage = "Local draft"
+        errorMessage = nil
     }
 
     func refresh() async {
@@ -107,6 +136,15 @@ final class DocumentContentViewModel {
     func updateEditedText(_ text: String) {
         guard let document else {
             editedText = text
+            return
+        }
+
+        if AppDevelopmentMode.localMarkdownEngineOnly {
+            editedText = text
+            hasUnsavedChanges = text != document.plainText
+            errorMessage = nil
+            statusMessage = "Local draft"
+            saveLocalDraft()
             return
         }
 
@@ -258,13 +296,7 @@ final class DocumentContentViewModel {
         }
 
         editedText = draft
-        editorAttributedText = NSAttributedString(
-            string: draft,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 16),
-                .foregroundColor: NSColor.white
-            ]
-        )
+        editorAttributedText = MarkdownStyler().attributedString(for: draft)
         editorVersion += 1
     }
 
@@ -464,4 +496,27 @@ final class DocumentContentViewModel {
         }
         return message
     }
+
+    private static let defaultLocalMarkdown = """
+    # New Note
+
+    Write here to test the local Markdown editor.
+
+    ## Formatting
+
+    Use **bold**, *italic*, ***bold italic***, ~~strikethrough~~, and [links](https://example.com).
+
+    - Bullet item
+      - Nested bullet item
+    1. Numbered item
+    2. Next numbered item
+
+    > Block quote
+
+    `inline code`
+
+    ```
+    code block
+    ```
+    """
 }

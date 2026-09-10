@@ -1,6 +1,156 @@
 import AppKit
 import Foundation
 
+struct MarkdownEditingEngine {
+    typealias TextReplacement = (range: NSRange, text: String, selectedRange: NSRange)
+
+    func replacementForReturn(in text: String, selectedRange: NSRange) -> TextReplacement? {
+        guard selectedRange.length == 0 else { return nil }
+
+        let nsText = text as NSString
+        let caretLocation = min(max(0, selectedRange.location), nsText.length)
+        let lineRange = nsText.lineRange(for: NSRange(location: caretLocation, length: 0))
+        let caretOffset = max(0, caretLocation - lineRange.location)
+        let textBeforeCaret = nsText.substring(with: NSRange(location: lineRange.location, length: caretOffset))
+            .trimmingCharacters(in: .newlines)
+        let fullLine = nsText.substring(with: lineRange)
+            .trimmingCharacters(in: .newlines)
+
+        guard let item = listItem(in: textBeforeCaret) else { return nil }
+
+        if fullLineContentAfterMarker(in: fullLine, markerLength: item.markerLength).trimmingCharacters(in: .whitespaces).isEmpty {
+            let markerRange = NSRange(location: lineRange.location, length: min(item.markerLength, nsText.length - lineRange.location))
+            return (markerRange, "", NSRange(location: markerRange.location, length: 0))
+        }
+
+        let continuation = "\n" + item.indent + item.nextMarker
+        let replacementRange = NSRange(location: caretLocation, length: 0)
+        return (
+            replacementRange,
+            continuation,
+            NSRange(location: caretLocation + (continuation as NSString).length, length: 0)
+        )
+    }
+
+    func replacementForTab(in text: String, selectedRange: NSRange, outdent: Bool) -> TextReplacement? {
+        let nsText = text as NSString
+        guard nsText.length > 0 else { return nil }
+
+        let selectedLineRange = nsText.lineRange(for: selectedRange)
+        var replacements: [(range: NSRange, text: String)] = []
+        var location = selectedLineRange.location
+
+        while location < NSMaxRange(selectedLineRange) {
+            let lineRange = nsText.lineRange(for: NSRange(location: location, length: 0))
+            let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
+
+            if lineHasListMarker(line) {
+                if outdent {
+                    let removableSpaces = removableIndentLength(in: line)
+                    if removableSpaces > 0 {
+                        replacements.append((NSRange(location: lineRange.location, length: removableSpaces), ""))
+                    }
+                } else {
+                    replacements.append((NSRange(location: lineRange.location, length: 0), "  "))
+                }
+            }
+
+            let next = NSMaxRange(lineRange)
+            if next <= location { break }
+            location = next
+        }
+
+        guard !replacements.isEmpty else { return nil }
+
+        let replacement = combinedReplacement(from: replacements, in: text)
+        let selectedShift = outdent ? -2 : 2
+        let newLocation = max(selectedLineRange.location, selectedRange.location + selectedShift)
+        return (replacement.range, replacement.text, NSRange(location: newLocation, length: selectedRange.length))
+    }
+
+    func replacementForCheckboxToggle(in text: String, location: Int) -> TextReplacement? {
+        let nsText = text as NSString
+        guard nsText.length > 0 else { return nil }
+
+        let safeLocation = min(max(0, location), nsText.length)
+        let lineRange = nsText.lineRange(for: NSRange(location: safeLocation, length: 0))
+        let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
+        guard let checkbox = checkboxMarker(in: line) else { return nil }
+
+        let replacementRange = NSRange(location: lineRange.location + checkbox.markerLocation, length: 3)
+        let replacementText = checkbox.isChecked ? "[ ]" : "[x]"
+        return (replacementRange, replacementText, NSRange(location: safeLocation, length: 0))
+    }
+
+    private func listItem(in linePrefix: String) -> (indent: String, markerLength: Int, nextMarker: String)? {
+        let nsLine = linePrefix as NSString
+        guard let regex = try? NSRegularExpression(pattern: #"^(\s*)([-*+] |\d+\. |\[ \] |\[x\] )"#),
+              let match = regex.firstMatch(in: linePrefix, range: NSRange(location: 0, length: nsLine.length)) else {
+            return nil
+        }
+
+        let indent = nsLine.substring(with: match.range(at: 1))
+        let marker = nsLine.substring(with: match.range(at: 2))
+        let nextMarker: String
+        if marker.range(of: #"^\d+\. $"#, options: .regularExpression) != nil {
+            let numberText = String(marker.dropLast(2))
+            let nextNumber = (Int(numberText) ?? 0) + 1
+            nextMarker = "\(nextNumber). "
+        } else if marker == "[x] " {
+            nextMarker = "[ ] "
+        } else {
+            nextMarker = marker
+        }
+
+        return (indent, match.range.length, nextMarker)
+    }
+
+    private func fullLineContentAfterMarker(in line: String, markerLength: Int) -> String {
+        let nsLine = line as NSString
+        guard markerLength <= nsLine.length else { return "" }
+        return nsLine.substring(from: markerLength)
+    }
+
+    private func lineHasListMarker(_ line: String) -> Bool {
+        let nsLine = line as NSString
+        guard let regex = try? NSRegularExpression(pattern: #"^\s*([-*+] |\d+\. |\[ \] |\[x\] )"#) else {
+            return false
+        }
+        return regex.firstMatch(in: line, range: NSRange(location: 0, length: nsLine.length)) != nil
+    }
+
+    private func removableIndentLength(in line: String) -> Int {
+        let leadingSpaces = line.prefix { $0 == " " }.count
+        return min(2, leadingSpaces)
+    }
+
+    private func checkboxMarker(in line: String) -> (markerLocation: Int, isChecked: Bool)? {
+        let nsLine = line as NSString
+        guard let regex = try? NSRegularExpression(pattern: #"^\s*(\[[ x]\]) "#),
+              let match = regex.firstMatch(in: line, range: NSRange(location: 0, length: nsLine.length)) else {
+            return nil
+        }
+
+        let marker = nsLine.substring(with: match.range(at: 1))
+        return (match.range(at: 1).location, marker == "[x]")
+    }
+
+    private func combinedReplacement(from replacements: [(range: NSRange, text: String)], in originalText: String) -> (range: NSRange, text: String) {
+        let nsText = originalText as NSString
+        let firstLocation = replacements.map(\.range.location).min() ?? 0
+        let lastLocation = replacements.map { NSMaxRange($0.range) }.max() ?? firstLocation
+        let combinedRange = NSRange(location: firstLocation, length: max(0, lastLocation - firstLocation))
+        let mutable = NSMutableString(string: nsText.substring(with: combinedRange))
+
+        for replacement in replacements.sorted(by: { $0.range.location > $1.range.location }) {
+            let localRange = NSRange(location: replacement.range.location - combinedRange.location, length: replacement.range.length)
+            mutable.replaceCharacters(in: localRange, with: replacement.text)
+        }
+
+        return (combinedRange, mutable as String)
+    }
+}
+
 struct MarkdownStyler {
     private let baseFont = NSFont.systemFont(ofSize: 16)
     private let monospacedFont = NSFont.monospacedSystemFont(ofSize: 15, weight: .regular)

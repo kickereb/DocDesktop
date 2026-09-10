@@ -47,4 +47,83 @@ struct MarkdownStylerTests {
         #expect(bulletStyle.headIndent > 0)
         #expect(link == URL(string: "https://example.com"))
     }
+
+    @Test func returnContinuesBulletList() throws {
+        let engine = MarkdownEditingEngine()
+        let text = "- First"
+        let replacement = try #require(engine.replacementForReturn(in: text, selectedRange: NSRange(location: 7, length: 0)))
+
+        #expect(replacement.range == NSRange(location: 7, length: 0))
+        #expect(replacement.text == "\n- ")
+    }
+
+    @Test func returnContinuesNestedBulletList() throws {
+        let engine = MarkdownEditingEngine()
+        let text = "  - Nested"
+        let replacement = try #require(engine.replacementForReturn(in: text, selectedRange: NSRange(location: 10, length: 0)))
+
+        #expect(replacement.text == "\n  - ")
+    }
+
+    @Test func returnContinuesNumberedListWithNextNumber() throws {
+        let engine = MarkdownEditingEngine()
+        let text = "9. Item"
+        let replacement = try #require(engine.replacementForReturn(in: text, selectedRange: NSRange(location: 7, length: 0)))
+
+        #expect(replacement.text == "\n10. ")
+    }
+
+    @Test func returnContinuesCheckboxListUnchecked() throws {
+        let engine = MarkdownEditingEngine()
+        let text = "[ ] Task"
+        let replacement = try #require(engine.replacementForReturn(in: text, selectedRange: NSRange(location: 8, length: 0)))
+
+        #expect(replacement.text == "\n[ ] ")
+    }
+
+    @Test func returnContinuesCheckboxListCheckedAsNewUncheckedItem() throws {
+        let engine = MarkdownEditingEngine()
+        let text = "[x] Done"
+        let replacement = try #require(engine.replacementForReturn(in: text, selectedRange: NSRange(location: 8, length: 0)))
+
+        #expect(replacement.text == "\n[ ] ")
+    }
+
+    @Test func returnOnEmptyListItemRemovesMarker() throws {
+        let engine = MarkdownEditingEngine()
+        let text = "- "
+        let replacement = try #require(engine.replacementForReturn(in: text, selectedRange: NSRange(location: 2, length: 0)))
+
+        #expect(replacement.range == NSRange(location: 0, length: 2))
+        #expect(replacement.text == "")
+        #expect(replacement.selectedRange == NSRange(location: 0, length: 0))
+    }
+
+    @Test func tabIndentsListItem() throws {
+        let engine = MarkdownEditingEngine()
+        let text = "- Item"
+        let replacement = try #require(engine.replacementForTab(in: text, selectedRange: NSRange(location: 2, length: 0), outdent: false))
+
+        #expect(replacement.range == NSRange(location: 0, length: 0))
+        #expect(replacement.text == "  ")
+    }
+
+    @Test func shiftTabOutdentsListItem() throws {
+        let engine = MarkdownEditingEngine()
+        let text = "  - Item"
+        let replacement = try #require(engine.replacementForTab(in: text, selectedRange: NSRange(location: 4, length: 0), outdent: true))
+
+        #expect(replacement.range == NSRange(location: 0, length: 2))
+        #expect(replacement.text == "")
+    }
+
+    @Test func checkboxToggleChangesMarkerOnly() throws {
+        let engine = MarkdownEditingEngine()
+        let text = "[ ] Task"
+        let replacement = try #require(engine.replacementForCheckboxToggle(in: text, location: 1))
+
+        #expect(replacement.range == NSRange(location: 0, length: 3))
+        #expect(replacement.text == "[x]")
+        #expect(replacement.selectedRange == NSRange(location: 1, length: 0))
+    }
 }

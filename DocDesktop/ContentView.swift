@@ -19,7 +19,9 @@ struct ContentView: View {
             Divider()
                 .opacity(isHovering ? 1 : 0)
 
-            if contentViewModel.document != nil, pickerViewModel.selectedDocument?.canEdit == true {
+            if !AppDevelopmentMode.localMarkdownEngineOnly,
+               contentViewModel.document != nil,
+               pickerViewModel.selectedDocument?.canEdit == true {
                 formattingToolbar
                     .opacity(isHovering ? 1 : 0)
 
@@ -40,6 +42,9 @@ struct ContentView: View {
                         loadSelectedDocument()
                     }
                     .padding(14)
+                } else if !authManager.isSignedIn && contentViewModel.document == nil {
+                    signedOutPanel
+                        .padding(14)
                 }
             }
 
@@ -76,22 +81,43 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .hideDocumentOverlay)) { _ in
             NSApp.sendAction(#selector(AppDelegate.hideDocumentWindow), to: nil, from: nil)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .newLocalMarkdownFile)) { _ in
+            startLocalMarkdownFile()
+        }
     }
 
     @ViewBuilder
     private var documentSurface: some View {
         if let document = contentViewModel.document {
-            MacAttributedTextView(
-                documentID: "\(document.documentID)-\(document.revisionID ?? "")-\(contentViewModel.editorVersion)",
-                text: contentViewModel.editorAttributedText,
-                isEditable: pickerViewModel.selectedDocument?.canEdit == true,
-                onTextChange: { newText in
-                    contentViewModel.updateEditedText(newText)
-                },
-                onSelectionChange: { range in
-                    editorSelection = range
+            if AppDevelopmentMode.localMarkdownEngineOnly {
+                VStack(spacing: 0) {
+                    MarkdownEditorView(
+                        documentID: "\(document.documentID)-\(contentViewModel.editorVersion)",
+                        text: contentViewModel.editedText,
+                        isEditable: editorIsEditable,
+                        onTextChange: { newText in
+                            contentViewModel.updateEditedText(newText)
+                        },
+                        onSelectionChange: { range in
+                            editorSelection = range
+                        }
+                    )
+
+                    MarkdownImagePreviewStrip(markdown: contentViewModel.editedText)
                 }
-            )
+            } else {
+                MacAttributedTextView(
+                    documentID: "\(document.documentID)-\(document.revisionID ?? "")-\(contentViewModel.editorVersion)",
+                    text: contentViewModel.editorAttributedText,
+                    isEditable: editorIsEditable,
+                    onTextChange: { newText in
+                        contentViewModel.updateEditedText(newText)
+                    },
+                    onSelectionChange: { range in
+                        editorSelection = range
+                    }
+                )
+            }
         } else if contentViewModel.isLoading {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -159,7 +185,7 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Text(pickerViewModel.selectedDocument?.title ?? "No document selected")
+            Text(contentViewModel.document?.title ?? pickerViewModel.selectedDocument?.title ?? "No document selected")
                 .font(.headline)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -167,6 +193,15 @@ struct ContentView: View {
             Spacer(minLength: 8)
 
             authButton
+
+            if AppDevelopmentMode.localMarkdownEngineOnly {
+                Button {
+                    startLocalMarkdownFile()
+                } label: {
+                    Image(systemName: "doc.badge.plus")
+                }
+                .help("New Local File")
+            }
 
             Button {
                 showsDocumentPicker.toggle()
@@ -192,7 +227,7 @@ struct ContentView: View {
             } label: {
                 Image(systemName: "square.and.arrow.down")
             }
-            .disabled(!contentViewModel.hasUnsavedChanges || contentViewModel.isSaving || pickerViewModel.selectedDocument?.canEdit != true)
+            .disabled(!contentViewModel.hasUnsavedChanges || contentViewModel.isSaving || !editorIsEditable)
             .help("Save")
 
             Button {
@@ -220,18 +255,9 @@ struct ContentView: View {
     private var authButton: some View {
         Button {
             if authManager.isSignedIn {
-                authManager.signOut()
-                pickerViewModel.clearSelection()
-                contentViewModel = DocumentContentViewModel()
-                showsDocumentPicker = false
+                signOut()
             } else {
-                Task {
-                    await authManager.signIn(presentationWindow: NSApp.windows.first { $0 is WidgetWindow })
-                    if authManager.isSignedIn {
-                        showsDocumentPicker = true
-                        await pickerViewModel.refresh()
-                    }
-                }
+                signIn()
             }
         } label: {
             Image(systemName: authManager.isSignedIn ? "person.crop.circle.badge.checkmark" : "person.crop.circle.badge.plus")
@@ -264,6 +290,37 @@ struct ContentView: View {
                 .lineLimit(3)
         }
         .font(.caption)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var signedOutPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Start")
+                .font(.headline)
+
+            Text("Use a local Markdown note now, or sign in to select a Google Doc.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 10) {
+                Button {
+                    startLocalMarkdownFile()
+                } label: {
+                    Label("New Local File", systemImage: "doc.badge.plus")
+                }
+
+                Button {
+                    signIn()
+                } label: {
+                    Label("Sign In", systemImage: "person.crop.circle.badge.plus")
+                }
+                .disabled(!authManager.setupStatus.isReady)
+            }
+        }
+        .buttonStyle(.borderless)
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.thinMaterial)
@@ -308,6 +365,10 @@ struct ContentView: View {
                 : contentViewModel.statusMessage
         }
 
+        if contentViewModel.document != nil {
+            return contentViewModel.statusMessage
+        }
+
         if pickerViewModel.isLoading {
             return pickerViewModel.statusMessage
         }
@@ -322,6 +383,36 @@ struct ContentView: View {
     private func loadSelectedDocument() {
         Task {
             await contentViewModel.load(selectedDocument: pickerViewModel.selectedDocument)
+        }
+    }
+
+    private func startLocalMarkdownFile() {
+        pickerViewModel.clearSelection()
+        showsSetup = false
+        showsDocumentPicker = false
+        contentViewModel.loadLocalMarkdownScratch()
+        NotificationCenter.default.post(name: .focusDocumentEditor, object: nil)
+    }
+
+    private func signIn() {
+        Task {
+            await authManager.signIn(presentationWindow: NSApp.windows.first { $0 is WidgetWindow })
+            if authManager.isSignedIn {
+                showsDocumentPicker = true
+                await pickerViewModel.refresh()
+            }
+        }
+    }
+
+    private func signOut() {
+        authManager.signOut()
+        pickerViewModel.clearSelection()
+        showsDocumentPicker = false
+        showsSetup = false
+        if AppDevelopmentMode.localMarkdownEngineOnly {
+            contentViewModel.loadLocalMarkdownScratch()
+        } else {
+            contentViewModel = DocumentContentViewModel()
         }
     }
 
@@ -376,9 +467,149 @@ struct ContentView: View {
         guard text.length > 0 else { return 0 }
         return min(max(0, editorSelection.location), text.length - 1)
     }
+
+    private var editorIsEditable: Bool {
+        AppDevelopmentMode.localMarkdownEngineOnly || pickerViewModel.selectedDocument?.canEdit == true
+    }
 }
 
 #Preview {
     ContentView()
         .frame(width: 420, height: 540)
+}
+
+private struct MarkdownImagePreviewStrip: View {
+    private let images: [MarkdownImageReference]
+
+    init(markdown: String) {
+        images = MarkdownImageReference.extract(from: markdown)
+    }
+
+    var body: some View {
+        if !images.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(images) { image in
+                        MarkdownImagePreview(reference: image)
+                    }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+            .frame(height: 122)
+            .background(.ultraThinMaterial)
+        }
+    }
+}
+
+private struct MarkdownImagePreview: View {
+    let reference: MarkdownImageReference
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            imageContent
+                .frame(width: 132, height: 82)
+                .background(Color.black.opacity(0.28))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+
+            Text(reference.altText.isEmpty ? reference.displayName : reference.altText)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(width: 132, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var imageContent: some View {
+        if let image = reference.localImage {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+        } else if let url = reference.remoteURL {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image
+                        .resizable()
+                        .scaledToFit()
+                case .failure:
+                    unavailableImage
+                case .empty:
+                    ProgressView()
+                        .controlSize(.small)
+                @unknown default:
+                    unavailableImage
+                }
+            }
+        } else {
+            unavailableImage
+        }
+    }
+
+    private var unavailableImage: some View {
+        Image(systemName: "photo")
+            .font(.title2)
+            .foregroundStyle(.secondary)
+    }
+}
+
+private struct MarkdownImageReference: Identifiable {
+    let altText: String
+    let source: String
+
+    var id: String {
+        source
+    }
+
+    var displayName: String {
+        if let url = remoteURL {
+            return url.lastPathComponent.isEmpty ? url.host() ?? source : url.lastPathComponent
+        }
+        return localURL?.lastPathComponent ?? source
+    }
+
+    var remoteURL: URL? {
+        guard let url = URL(string: source),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http" else {
+            return nil
+        }
+        return url
+    }
+
+    var localURL: URL? {
+        if source.hasPrefix("file://") {
+            return URL(string: source)
+        }
+        if source.hasPrefix("/") {
+            return URL(fileURLWithPath: source)
+        }
+        if source.hasPrefix("~/") {
+            let home = FileManager.default.homeDirectoryForCurrentUser.path
+            let path = home + String(source.dropFirst())
+            return URL(fileURLWithPath: path)
+        }
+        return nil
+    }
+
+    var localImage: NSImage? {
+        guard let localURL else { return nil }
+        return NSImage(contentsOf: localURL)
+    }
+
+    static func extract(from markdown: String) -> [MarkdownImageReference] {
+        let nsText = markdown as NSString
+        guard let regex = try? NSRegularExpression(pattern: #"!\[([^\]\n]*)\]\(([^)\n]+)\)"#) else {
+            return []
+        }
+
+        return regex.matches(in: markdown, range: NSRange(location: 0, length: nsText.length)).compactMap { match in
+            guard match.numberOfRanges == 3 else { return nil }
+            let altText = nsText.substring(with: match.range(at: 1))
+            let source = nsText.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !source.isEmpty else { return nil }
+            return MarkdownImageReference(altText: altText, source: source)
+        }
+    }
 }
