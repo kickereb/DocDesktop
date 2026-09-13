@@ -66,9 +66,11 @@ struct MarkdownEditorView: NSViewRepresentable {
         if context.coordinator.loadedDocumentID != documentID || context.coordinator.currentText != text {
             context.coordinator.isApplyingProgrammaticText = true
             let selectedRange = textView.selectedRange()
+            let visibleOrigin = context.coordinator.visibleOrigin(for: textView)
             textView.string = text
             context.coordinator.applyStyle(to: textView)
             textView.setSelectedRange(clamp(selectedRange, in: textView.string))
+            context.coordinator.restoreVisibleOrigin(visibleOrigin, for: textView)
             context.coordinator.isApplyingProgrammaticText = false
             context.coordinator.loadedDocumentID = documentID
             context.coordinator.currentText = text
@@ -108,8 +110,10 @@ struct MarkdownEditorView: NSViewRepresentable {
 
             currentText = textView.string
             let selectedRange = textView.selectedRange()
+            let visibleOrigin = visibleOrigin(for: textView)
             applyStyle(to: textView)
             textView.setSelectedRange(selectedRange)
+            restoreVisibleOrigin(visibleOrigin, for: textView)
             onTextChange(textView.string)
         }
 
@@ -121,6 +125,21 @@ struct MarkdownEditorView: NSViewRepresentable {
         func applyStyle(to textView: NSTextView) {
             guard let textStorage = textView.textStorage else { return }
             styler.apply(to: textStorage)
+        }
+
+        func visibleOrigin(for textView: NSTextView) -> NSPoint? {
+            textView.enclosingScrollView?.contentView.bounds.origin
+        }
+
+        func restoreVisibleOrigin(_ origin: NSPoint?, for textView: NSTextView) {
+            guard let origin,
+                  let scrollView = textView.enclosingScrollView else {
+                return
+            }
+
+            let clipView = scrollView.contentView
+            clipView.setBoundsOrigin(origin)
+            scrollView.reflectScrolledClipView(clipView)
         }
     }
 }

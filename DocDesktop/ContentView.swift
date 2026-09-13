@@ -377,7 +377,13 @@ struct ContentView: View {
     }
 
     private var errorText: String? {
-        contentViewModel.errorMessage ?? pickerViewModel.errorMessage ?? authManager.errorMessage
+        if AppDevelopmentMode.localMarkdownEngineOnly,
+           contentViewModel.document != nil,
+           pickerViewModel.selectedDocument == nil {
+            return contentViewModel.errorMessage
+        }
+
+        return contentViewModel.errorMessage ?? pickerViewModel.errorMessage ?? authManager.errorMessage
     }
 
     private func loadSelectedDocument() {

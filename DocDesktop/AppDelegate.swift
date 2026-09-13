@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var desktopWindowController: DesktopWindowController?
     private var globalHotKeyManager: GlobalHotKeyManager?
     private weak var previousApplication: NSRunningApplication?
+    private var lastShortcutToggleTime: TimeInterval = 0
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -27,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.button?.image?.isTemplate = true
 
         let menu = NSMenu()
-        menu.addItem(menuItem(title: "Show DocDesktop", action: #selector(showDocumentWindow), keyEquivalent: "d", modifiers: [.command, .shift]))
+        menu.addItem(menuItem(title: "Show DocDesktop", action: #selector(showDocumentWindow)))
         menu.addItem(menuItem(title: "Hide DocDesktop", action: #selector(hideDocumentWindow)))
         menu.addItem(menuItem(title: "New Local File", action: #selector(newLocalFile), keyEquivalent: "n", modifiers: [.command]))
         menu.addItem(menuItem(title: "Change Document", action: #selector(changeDocument)))
@@ -67,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func popUpDocumentWindow() {
+        guard canProcessShortcutToggle() else { return }
         toggleOverlay()
     }
 
@@ -113,6 +115,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             previousApplication = NSWorkspace.shared.frontmostApplication
             showOverlay()
         }
+    }
+
+    private func canProcessShortcutToggle() -> Bool {
+        let now = ProcessInfo.processInfo.systemUptime
+        defer { lastShortcutToggleTime = now }
+        return now - lastShortcutToggleTime > 0.25
     }
 
     private func showOverlay() {
