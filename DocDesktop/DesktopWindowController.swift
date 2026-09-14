@@ -3,6 +3,7 @@ import SwiftUI
 
 final class DesktopWindowController: NSWindowController, NSWindowDelegate {
     private let stateStore = WindowStateStore()
+    private var isShown = false
     var onHide: (() -> Void)?
 
     init() {
@@ -57,6 +58,7 @@ final class DesktopWindowController: NSWindowController, NSWindowDelegate {
 
     func showOverlay() {
         guard let window else { return }
+        isShown = true
         window.level = .floating
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
         NSApp.activate(ignoringOtherApps: true)
@@ -71,6 +73,8 @@ final class DesktopWindowController: NSWindowController, NSWindowDelegate {
 
     func hideOverlay() {
         guard let window else { return }
+        guard isShown || window.isVisible else { return }
+        isShown = false
         saveWindowFrame()
         NotificationCenter.default.post(name: .saveDocumentNow, object: nil)
         window.orderOut(nil)
@@ -78,7 +82,7 @@ final class DesktopWindowController: NSWindowController, NSWindowDelegate {
     }
 
     var isOverlayVisible: Bool {
-        window?.isVisible == true
+        isShown || window?.isVisible == true
     }
 
     func windowDidMove(_ notification: Notification) {

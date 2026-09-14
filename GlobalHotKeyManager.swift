@@ -5,6 +5,7 @@ final class GlobalHotKeyManager {
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
     private let onTrigger: () -> Void
+    private var isHotKeyDown = false
 
     init(onTrigger: @escaping () -> Void) {
         self.onTrigger = onTrigger
@@ -17,12 +18,15 @@ final class GlobalHotKeyManager {
     func register() {
         unregister()
 
-        var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        var eventTypes = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased))
+        ]
         let status = InstallEventHandler(
             GetApplicationEventTarget(),
             globalHotKeyHandler,
-            1,
-            &eventType,
+            eventTypes.count,
+            &eventTypes,
             Unmanaged.passUnretained(self).toOpaque(),
             &eventHandlerRef
         )
@@ -52,7 +56,20 @@ final class GlobalHotKeyManager {
         }
     }
 
-    fileprivate func handleTrigger() {
+    fileprivate func handleEvent(kind: UInt32) {
+        switch kind {
+        case UInt32(kEventHotKeyPressed):
+            handlePressed()
+        case UInt32(kEventHotKeyReleased):
+            isHotKeyDown = false
+        default:
+            break
+        }
+    }
+
+    private func handlePressed() {
+        guard !isHotKeyDown else { return }
+        isHotKeyDown = true
         DispatchQueue.main.async { [onTrigger] in
             onTrigger()
         }
@@ -64,8 +81,8 @@ private func globalHotKeyHandler(
     event: EventRef?,
     userData: UnsafeMutableRawPointer?
 ) -> OSStatus {
-    guard let userData else { return noErr }
+    guard let userData, let event else { return noErr }
     let manager = Unmanaged<GlobalHotKeyManager>.fromOpaque(userData).takeUnretainedValue()
-    manager.handleTrigger()
+    manager.handleEvent(kind: GetEventKind(event))
     return noErr
 }
