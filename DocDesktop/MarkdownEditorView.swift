@@ -174,6 +174,18 @@ private final class MarkdownNSTextView: NSTextView {
             return
         }
 
+        if isCommandIndentKey(event),
+           let replacement = editingEngine.replacementForTab(in: string, selectedRange: selectedRange(), outdent: false) {
+            applyReplacement(replacement)
+            return
+        }
+
+        if isCommandOutdentKey(event),
+           let replacement = editingEngine.replacementForTab(in: string, selectedRange: selectedRange(), outdent: true) {
+            applyReplacement(replacement)
+            return
+        }
+
         if isTabKey(event),
            let replacement = editingEngine.replacementForTab(
             in: string,
@@ -199,6 +211,14 @@ private final class MarkdownNSTextView: NSTextView {
 
     private func isTabKey(_ event: NSEvent) -> Bool {
         event.keyCode == 48
+    }
+
+    private func isCommandIndentKey(_ event: NSEvent) -> Bool {
+        event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "]"
+    }
+
+    private func isCommandOutdentKey(_ event: NSEvent) -> Bool {
+        event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "["
     }
 
     private func checkboxReplacement(for event: NSEvent) -> MarkdownEditingEngine.TextReplacement? {

@@ -117,6 +117,24 @@ struct MarkdownStylerTests {
         #expect(replacement.text == "")
     }
 
+    @Test func tabIndentsSelectedListItems() throws {
+        let engine = MarkdownEditingEngine()
+        let text = "- One\n- Two\nPlain"
+        let replacement = try #require(engine.replacementForTab(in: text, selectedRange: NSRange(location: 0, length: 11), outdent: false))
+
+        #expect(replacement.range == NSRange(location: 0, length: 6))
+        #expect(replacement.text == "  - One\n  ")
+    }
+
+    @Test func shiftTabOutdentsSelectedListItems() throws {
+        let engine = MarkdownEditingEngine()
+        let text = "  - One\n  - Two\nPlain"
+        let replacement = try #require(engine.replacementForTab(in: text, selectedRange: NSRange(location: 0, length: 17), outdent: true))
+
+        #expect(replacement.range == NSRange(location: 0, length: 10))
+        #expect(replacement.text == "- One\n")
+    }
+
     @Test func checkboxToggleChangesMarkerOnly() throws {
         let engine = MarkdownEditingEngine()
         let text = "[ ] Task"
