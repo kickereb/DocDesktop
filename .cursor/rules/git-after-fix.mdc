@@ -1,0 +1,28 @@
+---
+description: Provide Git commands after every fix
+alwaysApply: true
+---
+
+# Git Commands After Fixes
+
+After making and validating any code fix in this project, include terminal commands to commit and push the relevant changed files.
+
+Use targeted `git add` commands for files changed by the fix.
+
+Do not include generated files or Xcode UI state, especially:
+
+```zsh
+DocDesktop.xcodeproj/project.xcworkspace/xcuserdata/evam.xcuserdatad/UserInterfaceState.xcuserstate
+```
+
+Prefer this shape:
+
+```zsh
+cd "/Users/evam/Desktop/XCode Dev/DocDesktop"
+
+git status
+git add <changed files>
+git commit -m "<clear commit message>"
+git pull --rebase origin main
+git push origin main
+```

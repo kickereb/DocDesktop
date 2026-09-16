@@ -200,7 +200,7 @@ struct MarkdownEditorView: NSViewRepresentable {
                 return
             }
 
-            guard caretIsVisible(in: textView, scrollView: scrollView) else {
+            guard caretWouldBeVisible(in: textView, clipView: clipView, origin: origin) else {
                 debugLog(event: "scrollRestoreSkippedCaret", textView: textView, editedRange: nil, origin: "scroll")
                 return
             }
@@ -210,7 +210,7 @@ struct MarkdownEditorView: NSViewRepresentable {
             debugLog(event: "scrollRestored", textView: textView, editedRange: nil, origin: "scroll")
         }
 
-        private func caretIsVisible(in textView: NSTextView, scrollView: NSScrollView) -> Bool {
+        private func caretWouldBeVisible(in textView: NSTextView, clipView: NSClipView, origin: NSPoint) -> Bool {
             guard let layoutManager = textView.layoutManager,
                   let textContainer = textView.textContainer else {
                 return true
@@ -223,7 +223,9 @@ struct MarkdownEditorView: NSViewRepresentable {
             )
             let caretRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
                 .offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
-            return scrollView.contentView.bounds.insetBy(dx: 0, dy: -24).intersects(caretRect)
+            let expectedVisibleRect = NSRect(origin: origin, size: clipView.bounds.size)
+                .insetBy(dx: 0, dy: -24)
+            return expectedVisibleRect.intersects(caretRect)
         }
 
         func debugLog(event: String, textView: NSTextView, editedRange: NSRange?, origin: String) {
@@ -292,6 +294,21 @@ private final class MarkdownNSTextView: NSTextView {
         super.keyDown(with: event)
     }
 
+    override func paste(_ sender: Any?) {
+        if let markdown = MarkdownImagePasteboardWriter.markdownImageReference(from: .general) {
+            let range = selectedRange()
+            let replacement: MarkdownEditingEngine.TextReplacement = (
+                range: range,
+                text: markdown,
+                selectedRange: NSRange(location: range.location + (markdown as NSString).length, length: 0)
+            )
+            applyReplacement(replacement)
+            return
+        }
+
+        super.paste(sender)
+    }
+
     private func activateWindowForEditing() {
         guard let window else { return }
         window.makeKey()
@@ -317,7 +334,10 @@ private final class MarkdownNSTextView: NSTextView {
     private func checkboxReplacement(for event: NSEvent) -> MarkdownEditingEngine.TextReplacement? {
         let point = convert(event.locationInWindow, from: nil)
         let insertionIndex = characterIndexForInsertion(at: point)
-        return editingEngine.replacementForCheckboxToggle(in: string, location: insertionIndex)
+        guard let lineLocation = lineLocation(at: insertionIndex) else {
+            return nil
+        }
+        return editingEngine.replacementForCheckboxToggle(in: string, location: lineLocation)
     }
 
     private func applyReplacement(_ replacement: MarkdownEditingEngine.TextReplacement) {
@@ -347,8 +367,30 @@ private final class MarkdownNSTextView: NSTextView {
             return
         }
 
+        guard caretWouldBeVisible(at: origin, in: clipView) else {
+            return
+        }
+
         clipView.setBoundsOrigin(origin)
         scrollView.reflectScrolledClipView(clipView)
+    }
+
+    private func caretWouldBeVisible(at origin: NSPoint, in clipView: NSClipView) -> Bool {
+        guard let layoutManager,
+              let textContainer else {
+            return true
+        }
+
+        let selectedRange = selectedRange()
+        let glyphRange = layoutManager.glyphRange(
+            forCharacterRange: NSRange(location: selectedRange.location, length: 0),
+            actualCharacterRange: nil
+        )
+        let caretRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            .offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        let expectedVisibleRect = NSRect(origin: origin, size: clipView.bounds.size)
+            .insetBy(dx: 0, dy: -24)
+        return expectedVisibleRect.intersects(caretRect)
     }
 
     private func clamp(_ range: NSRange) -> NSRange {
@@ -356,5 +398,70 @@ private final class MarkdownNSTextView: NSTextView {
         let location = min(max(0, range.location), length)
         let maxLength = max(0, length - location)
         return NSRange(location: location, length: min(range.length, maxLength))
+    }
+
+    private func lineLocation(at location: Int) -> Int? {
+        let nsText = string as NSString
+        guard nsText.length > 0 else { return nil }
+        let safeLocation = min(max(0, location), max(0, nsText.length - 1))
+        return nsText.lineRange(for: NSRange(location: safeLocation, length: 0)).location
+    }
+}
+
+private enum MarkdownImagePasteboardWriter {
+    static func markdownImageReference(from pasteboard: NSPasteboard) -> String? {
+        if let fileURL = imageFileURL(from: pasteboard) {
+            return markdownReference(for: fileURL)
+        }
+
+        guard let image = NSImage(pasteboard: pasteboard),
+              let savedURL = save(image: image) else {
+            return nil
+        }
+
+        return markdownReference(for: savedURL)
+    }
+
+    private static func imageFileURL(from pasteboard: NSPasteboard) -> URL? {
+        guard let fileURLString = pasteboard.string(forType: .fileURL),
+              let url = URL(string: fileURLString),
+              NSImage(contentsOf: url) != nil else {
+            return nil
+        }
+        return url
+    }
+
+    private static func save(image: NSImage) -> URL? {
+        guard let tiffData = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiffData),
+              let pngData = bitmap.representation(using: .png, properties: [:]) else {
+            return nil
+        }
+
+        do {
+            let directory = try imageDirectory()
+            let fileURL = directory.appendingPathComponent("pasted-\(UUID().uuidString).png")
+            try pngData.write(to: fileURL, options: .atomic)
+            return fileURL
+        } catch {
+            return nil
+        }
+    }
+
+    private static func imageDirectory() throws -> URL {
+        let baseURL = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let directory = baseURL.appendingPathComponent("DocDesktop/LocalImages", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory
+    }
+
+    private static func markdownReference(for url: URL) -> String {
+        let altText = url.deletingPathExtension().lastPathComponent
+        return "\n![\(altText)](\(url.absoluteString))\n"
     }
 }
