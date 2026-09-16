@@ -43,7 +43,7 @@ struct MarkdownEditorView: NSViewRepresentable {
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
         textView.textContainer?.containerSize = NSSize(width: scrollView.contentSize.width, height: .greatestFiniteMagnitude)
-        context.coordinator.applyStyle(to: textView)
+        context.coordinator.applyFullStyle(to: textView)
         context.coordinator.loadedDocumentID = documentID
         context.coordinator.currentText = text
         context.coordinator.focusObserver = NotificationCenter.default.addObserver(
@@ -63,14 +63,21 @@ struct MarkdownEditorView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         textView.isEditable = isEditable
 
-        if context.coordinator.loadedDocumentID != documentID || context.coordinator.currentText != text {
+        let documentChanged = context.coordinator.loadedDocumentID != documentID
+        if !documentChanged && context.coordinator.isEditorEcho(text) {
+            context.coordinator.debugLog(event: "updateNSViewSkippedEcho", textView: textView, editedRange: nil, origin: "SwiftUI")
+            return
+        }
+
+        if documentChanged || context.coordinator.currentText != text {
+            context.coordinator.debugLog(event: "updateNSViewApplyExternal", textView: textView, editedRange: nil, origin: "externalModel")
             context.coordinator.isApplyingProgrammaticText = true
             let selectedRange = textView.selectedRange()
             let visibleOrigin = context.coordinator.visibleOrigin(for: textView)
             textView.string = text
-            context.coordinator.applyStyle(to: textView)
-            textView.setSelectedRange(clamp(selectedRange, in: textView.string))
-            context.coordinator.restoreVisibleOrigin(visibleOrigin, for: textView)
+            context.coordinator.applyFullStyle(to: textView)
+            context.coordinator.setSelectedRangeIfNeeded(clamp(selectedRange, in: textView.string), for: textView)
+            context.coordinator.restoreVisibleOriginIfNeeded(visibleOrigin, for: textView)
             context.coordinator.isApplyingProgrammaticText = false
             context.coordinator.loadedDocumentID = documentID
             context.coordinator.currentText = text
@@ -95,6 +102,7 @@ struct MarkdownEditorView: NSViewRepresentable {
         var currentText = ""
         var isApplyingProgrammaticText = false
         var focusObserver: NSObjectProtocol?
+        private var lastEditorEmittedText: String?
         private let styler = MarkdownStyler()
         private let onTextChange: (String) -> Void
         private let onSelectionChange: (NSRange) -> Void
@@ -109,37 +117,122 @@ struct MarkdownEditorView: NSViewRepresentable {
                   let textView = notification.object as? NSTextView else { return }
 
             currentText = textView.string
+            lastEditorEmittedText = textView.string
             let selectedRange = textView.selectedRange()
             let visibleOrigin = visibleOrigin(for: textView)
-            applyStyle(to: textView)
-            textView.setSelectedRange(selectedRange)
-            restoreVisibleOrigin(visibleOrigin, for: textView)
+            let editedRange = textView.textStorage?.editedRange ?? selectedRange
+            debugLog(event: "textDidChange", textView: textView, editedRange: editedRange, origin: "user")
+            applyStyle(to: textView, affectedBy: editedRange)
+            setSelectedRangeIfNeeded(selectedRange, for: textView)
+            restoreVisibleOriginIfNeeded(visibleOrigin, for: textView, delayedCheck: true)
             onTextChange(textView.string)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            debugLog(event: "selectionChange", textView: textView, editedRange: nil, origin: "user")
             onSelectionChange(textView.selectedRange())
         }
 
-        func applyStyle(to textView: NSTextView) {
+        func isEditorEcho(_ text: String) -> Bool {
+            text == currentText || text == lastEditorEmittedText
+        }
+
+        func applyFullStyle(to textView: NSTextView) {
             guard let textStorage = textView.textStorage else { return }
+            debugLog(event: "styleFullStart", textView: textView, editedRange: NSRange(location: 0, length: textStorage.length), origin: "styling")
             styler.apply(to: textStorage)
+            debugLog(event: "styleFullEnd", textView: textView, editedRange: NSRange(location: 0, length: textStorage.length), origin: "styling")
+        }
+
+        func applyStyle(to textView: NSTextView, affectedBy editedRange: NSRange) {
+            guard let textStorage = textView.textStorage else { return }
+            debugLog(event: "styleDirtyStart", textView: textView, editedRange: editedRange, origin: "styling")
+            let dirtyRange = styler.apply(to: textStorage, affectedBy: editedRange)
+            debugLog(event: "styleDirtyEnd", textView: textView, editedRange: dirtyRange, origin: "styling")
         }
 
         func visibleOrigin(for textView: NSTextView) -> NSPoint? {
             textView.enclosingScrollView?.contentView.bounds.origin
         }
 
-        func restoreVisibleOrigin(_ origin: NSPoint?, for textView: NSTextView) {
+        func setSelectedRangeIfNeeded(_ range: NSRange, for textView: NSTextView) {
+            let clampedRange = clamp(range, in: textView.string)
+            guard textView.selectedRange() != clampedRange else {
+                debugLog(event: "selectionRestoreSkipped", textView: textView, editedRange: clampedRange, origin: "selection")
+                return
+            }
+            textView.setSelectedRange(clampedRange)
+            debugLog(event: "selectionRestored", textView: textView, editedRange: clampedRange, origin: "selection")
+        }
+
+        private func clamp(_ range: NSRange, in text: String) -> NSRange {
+            let length = (text as NSString).length
+            let location = min(max(0, range.location), length)
+            let maxLength = max(0, length - location)
+            return NSRange(location: location, length: min(range.length, maxLength))
+        }
+
+        func restoreVisibleOriginIfNeeded(_ origin: NSPoint?, for textView: NSTextView, delayedCheck: Bool = false) {
             guard let origin,
                   let scrollView = textView.enclosingScrollView else {
                 return
             }
 
             let clipView = scrollView.contentView
+            restore(origin, in: clipView, scrollView: scrollView, textView: textView)
+
+            if delayedCheck {
+                DispatchQueue.main.async { [weak textView, weak scrollView] in
+                    guard let textView,
+                          let scrollView else {
+                        return
+                    }
+                    self.restore(origin, in: scrollView.contentView, scrollView: scrollView, textView: textView)
+                }
+            }
+        }
+
+        private func restore(_ origin: NSPoint, in clipView: NSClipView, scrollView: NSScrollView, textView: NSTextView) {
+            let currentOrigin = clipView.bounds.origin
+            guard abs(currentOrigin.x - origin.x) > 0.5 || abs(currentOrigin.y - origin.y) > 0.5 else {
+                debugLog(event: "scrollRestoreSkipped", textView: textView, editedRange: nil, origin: "scroll")
+                return
+            }
+
+            guard caretIsVisible(in: textView, scrollView: scrollView) else {
+                debugLog(event: "scrollRestoreSkippedCaret", textView: textView, editedRange: nil, origin: "scroll")
+                return
+            }
+
             clipView.setBoundsOrigin(origin)
             scrollView.reflectScrolledClipView(clipView)
+            debugLog(event: "scrollRestored", textView: textView, editedRange: nil, origin: "scroll")
+        }
+
+        private func caretIsVisible(in textView: NSTextView, scrollView: NSScrollView) -> Bool {
+            guard let layoutManager = textView.layoutManager,
+                  let textContainer = textView.textContainer else {
+                return true
+            }
+
+            let selectedRange = textView.selectedRange()
+            let glyphRange = layoutManager.glyphRange(
+                forCharacterRange: NSRange(location: selectedRange.location, length: 0),
+                actualCharacterRange: nil
+            )
+            let caretRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+                .offsetBy(dx: textView.textContainerOrigin.x, dy: textView.textContainerOrigin.y)
+            return scrollView.contentView.bounds.insetBy(dx: 0, dy: -24).intersects(caretRect)
+        }
+
+        func debugLog(event: String, textView: NSTextView, editedRange: NSRange?, origin: String) {
+            #if DEBUG
+            let selectedRange = textView.selectedRange()
+            let visibleY = textView.enclosingScrollView?.contentView.bounds.origin.y ?? 0
+            let editedText = editedRange.map { "{\($0.location),\($0.length)}" } ?? "nil"
+            print("[EditorDebug] event=\(event) editedRange=\(editedText) selection={\(selectedRange.location),\(selectedRange.length)} visibleY=\(String(format: "%.1f", visibleY)) length=\((textView.string as NSString).length) origin=\(origin)")
+            #endif
         }
     }
 }
@@ -229,8 +322,39 @@ private final class MarkdownNSTextView: NSTextView {
 
     private func applyReplacement(_ replacement: MarkdownEditingEngine.TextReplacement) {
         guard shouldChangeText(in: replacement.range, replacementString: replacement.text) else { return }
+        let visibleOrigin = enclosingScrollView?.contentView.bounds.origin
         textStorage?.replaceCharacters(in: replacement.range, with: replacement.text)
         didChangeText()
-        setSelectedRange(replacement.selectedRange)
+        setSelectedRangeIfNeeded(replacement.selectedRange)
+        restoreVisibleOriginIfNeeded(visibleOrigin)
+    }
+
+    private func setSelectedRangeIfNeeded(_ range: NSRange) {
+        let clampedRange = clamp(range)
+        guard selectedRange() != clampedRange else { return }
+        setSelectedRange(clampedRange)
+    }
+
+    private func restoreVisibleOriginIfNeeded(_ origin: NSPoint?) {
+        guard let origin,
+              let scrollView = enclosingScrollView else {
+            return
+        }
+
+        let clipView = scrollView.contentView
+        let currentOrigin = clipView.bounds.origin
+        guard abs(currentOrigin.x - origin.x) > 0.5 || abs(currentOrigin.y - origin.y) > 0.5 else {
+            return
+        }
+
+        clipView.setBoundsOrigin(origin)
+        scrollView.reflectScrolledClipView(clipView)
+    }
+
+    private func clamp(_ range: NSRange) -> NSRange {
+        let length = (string as NSString).length
+        let location = min(max(0, range.location), length)
+        let maxLength = max(0, length - location)
+        return NSRange(location: location, length: min(range.length, maxLength))
     }
 }

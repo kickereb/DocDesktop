@@ -165,27 +165,49 @@ struct MarkdownStyler {
             attributes: baseAttributes(paragraphStyle: paragraphStyle())
         )
 
-        styleBlocks(in: output)
-        styleInlineRuns(in: output)
+        let fullRange = NSRange(location: 0, length: output.length)
+        styleBlocks(in: output, range: fullRange)
+        styleInlineRuns(in: output, range: fullRange)
         return output
     }
 
     func apply(to textStorage: NSTextStorage) {
-        let selectedRange = NSRange(location: 0, length: textStorage.length)
+        let fullRange = NSRange(location: 0, length: textStorage.length)
         textStorage.beginEditing()
-        textStorage.setAttributes(baseAttributes(paragraphStyle: paragraphStyle()), range: selectedRange)
-        styleBlocks(in: textStorage)
-        styleInlineRuns(in: textStorage)
+        if fullRange.length > 0 {
+            textStorage.setAttributes(baseAttributes(paragraphStyle: paragraphStyle()), range: fullRange)
+            styleBlocks(in: textStorage, range: fullRange)
+            styleInlineRuns(in: textStorage, range: fullRange)
+        }
         textStorage.endEditing()
     }
 
-    private func styleBlocks(in text: NSMutableAttributedString) {
+    func apply(to textStorage: NSTextStorage, affectedBy editedRange: NSRange) -> NSRange {
+        let dirtyRange = MarkdownDirtyRangeResolver().dirtyRange(affectedBy: editedRange, in: textStorage.string)
+        guard dirtyRange.length > 0 else { return dirtyRange }
+
+        textStorage.beginEditing()
+        textStorage.setAttributes(baseAttributes(paragraphStyle: paragraphStyle()), range: dirtyRange)
+        styleBlocks(in: textStorage, range: dirtyRange)
+        styleInlineRuns(in: textStorage, range: dirtyRange)
+        textStorage.endEditing()
+
+        return dirtyRange
+    }
+
+    private func styleBlocks(in text: NSMutableAttributedString, range stylingRange: NSRange) {
         let nsText = text.string as NSString
-        var lineStart = 0
+        guard nsText.length > 0 else { return }
+
+        let safeRange = clamp(stylingRange, length: nsText.length)
+        guard safeRange.length > 0 else { return }
+
+        var lineStart = nsText.lineRange(for: NSRange(location: safeRange.location, length: 0)).location
+        let stylingEnd = NSMaxRange(safeRange)
         var orderedCounters: [Int: Int] = [:]
         var isInCodeBlock = false
 
-        while lineStart <= nsText.length {
+        while lineStart >= 0 && lineStart < nsText.length && lineStart < stylingEnd {
             let lineRange = nsText.lineRange(for: NSRange(location: lineStart, length: 0))
             let rawLine = nsText.substring(with: lineRange)
             let line = rawLine.trimmingCharacters(in: .newlines)
@@ -253,8 +275,12 @@ struct MarkdownStyler {
         }
     }
 
-    private func styleInlineRuns(in text: NSMutableAttributedString) {
-        applyInline(pattern: #"(`)([^`\n]+)(`)"#, in: text) { match, nsText in
+    private func styleInlineRuns(in text: NSMutableAttributedString, range stylingRange: NSRange) {
+        let nsText = text.string as NSString
+        let safeRange = clamp(stylingRange, length: nsText.length)
+        guard safeRange.length > 0 else { return }
+
+        applyInline(pattern: #"(`)([^`\n]+)(`)"#, in: text, range: safeRange) { match, nsText in
             [
                 (match.range(at: 1), [.foregroundColor: markerColor]),
                 (match.range(at: 2), [.font: monospacedFont, .backgroundColor: NSColor.white.withAlphaComponent(0.08)]),
@@ -262,7 +288,7 @@ struct MarkdownStyler {
             ]
         }
 
-        applyInline(pattern: #"(\*\*\*)(.+?)(\*\*\*)"#, in: text) { match, _ in
+        applyInline(pattern: #"(\*\*\*)(.+?)(\*\*\*)"#, in: text, range: safeRange) { match, _ in
             [
                 (match.range(at: 1), [.foregroundColor: markerColor]),
                 (match.range(at: 2), [.font: NSFontManager.shared.convert(NSFont.boldSystemFont(ofSize: 16), toHaveTrait: .italicFontMask)]),
@@ -270,7 +296,7 @@ struct MarkdownStyler {
             ]
         }
 
-        applyInline(pattern: #"(\*\*)([^*\n]+)(\*\*)"#, in: text) { match, _ in
+        applyInline(pattern: #"(\*\*)([^*\n]+)(\*\*)"#, in: text, range: safeRange) { match, _ in
             [
                 (match.range(at: 1), [.foregroundColor: markerColor]),
                 (match.range(at: 2), [.font: NSFont.boldSystemFont(ofSize: 16)]),
@@ -278,7 +304,7 @@ struct MarkdownStyler {
             ]
         }
 
-        applyInline(pattern: #"(?<!\*)(\*)([^*\n]+)(\*)(?!\*)"#, in: text) { match, _ in
+        applyInline(pattern: #"(?<!\*)(\*)([^*\n]+)(\*)(?!\*)"#, in: text, range: safeRange) { match, _ in
             [
                 (match.range(at: 1), [.foregroundColor: markerColor]),
                 (match.range(at: 2), [.font: NSFontManager.shared.convert(NSFont.systemFont(ofSize: 16), toHaveTrait: .italicFontMask)]),
@@ -286,7 +312,7 @@ struct MarkdownStyler {
             ]
         }
 
-        applyInline(pattern: #"(~~)([^~\n]+)(~~)"#, in: text) { match, _ in
+        applyInline(pattern: #"(~~)([^~\n]+)(~~)"#, in: text, range: safeRange) { match, _ in
             [
                 (match.range(at: 1), [.foregroundColor: markerColor]),
                 (match.range(at: 2), [.strikethroughStyle: NSUnderlineStyle.single.rawValue]),
@@ -294,7 +320,7 @@ struct MarkdownStyler {
             ]
         }
 
-        applyInline(pattern: #"(\[)([^\]\n]+)(\]\()([^\s)]+)(\))"#, in: text) { match, nsText in
+        applyInline(pattern: #"(\[)([^\]\n]+)(\]\()([^\s)]+)(\))"#, in: text, range: safeRange) { match, nsText in
             let urlText = nsText.substring(with: match.range(at: 4))
             let url = URL(string: urlText)
             var linkAttrs: [NSAttributedString.Key: Any] = [
@@ -317,11 +343,12 @@ struct MarkdownStyler {
     private func applyInline(
         pattern: String,
         in text: NSMutableAttributedString,
+        range searchRange: NSRange,
         attributes: (NSTextCheckingResult, NSString) -> [(NSRange, [NSAttributedString.Key: Any])]
     ) {
         let nsText = text.string as NSString
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
-        let matches = regex.matches(in: text.string, range: NSRange(location: 0, length: nsText.length))
+        let matches = regex.matches(in: text.string, range: clamp(searchRange, length: nsText.length))
 
         for match in matches {
             for (range, attrs) in attributes(match, nsText) where range.location != NSNotFound && range.length > 0 {
@@ -406,5 +433,139 @@ struct MarkdownStyler {
         } else {
             lineStart = next
         }
+    }
+
+    private func clamp(_ range: NSRange, length: Int) -> NSRange {
+        let location = min(max(0, range.location), length)
+        let maxLength = max(0, length - location)
+        return NSRange(location: location, length: min(max(0, range.length), maxLength))
+    }
+}
+
+struct MarkdownDirtyRangeResolver {
+    func dirtyRange(affectedBy editedRange: NSRange, in text: String) -> NSRange {
+        let nsText = text as NSString
+        guard nsText.length > 0 else {
+            return NSRange(location: 0, length: 0)
+        }
+
+        let location = min(max(0, editedRange.location), max(0, nsText.length - 1))
+        let baseLine = nsText.lineRange(for: NSRange(location: location, length: 0))
+        let line = nsText.substring(with: baseLine).trimmingCharacters(in: .newlines)
+
+        if line.hasPrefix("```") || isInsideFencedCodeBlock(location: location, in: nsText) {
+            return fencedCodeRange(containing: location, in: nsText)
+        }
+
+        if isListLine(line) {
+            return contiguousBlock(containing: baseLine, in: nsText, matches: isListLine)
+        }
+
+        if isQuoteLine(line) {
+            return contiguousBlock(containing: baseLine, in: nsText, matches: isQuoteLine)
+        }
+
+        return baseLine
+    }
+
+    private func contiguousBlock(
+        containing baseLine: NSRange,
+        in nsText: NSString,
+        matches predicate: (String) -> Bool
+    ) -> NSRange {
+        var start = baseLine.location
+        var end = NSMaxRange(baseLine)
+
+        var previousStart = previousLineStart(before: start, in: nsText)
+        while let candidate = previousStart {
+            let candidateRange = nsText.lineRange(for: NSRange(location: candidate, length: 0))
+            let candidateLine = nsText.substring(with: candidateRange).trimmingCharacters(in: .newlines)
+            guard predicate(candidateLine) else { break }
+            start = candidateRange.location
+            previousStart = previousLineStart(before: start, in: nsText)
+        }
+
+        var nextStart = end
+        while nextStart < nsText.length {
+            let candidateRange = nsText.lineRange(for: NSRange(location: nextStart, length: 0))
+            let candidateLine = nsText.substring(with: candidateRange).trimmingCharacters(in: .newlines)
+            guard predicate(candidateLine) else { break }
+            end = NSMaxRange(candidateRange)
+            if end <= nextStart { break }
+            nextStart = end
+        }
+
+        return NSRange(location: start, length: max(0, end - start))
+    }
+
+    private func fencedCodeRange(containing location: Int, in nsText: NSString) -> NSRange {
+        var start = nsText.lineRange(for: NSRange(location: location, length: 0)).location
+        var scan = start
+        var foundStart = false
+
+        while scan >= 0 {
+            let lineRange = nsText.lineRange(for: NSRange(location: scan, length: 0))
+            let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
+            if line.hasPrefix("```") {
+                start = lineRange.location
+                foundStart = true
+                break
+            }
+            guard let previous = previousLineStart(before: lineRange.location, in: nsText) else { break }
+            scan = previous
+        }
+
+        guard foundStart else {
+            return nsText.lineRange(for: NSRange(location: location, length: 0))
+        }
+
+        var end = NSMaxRange(nsText.lineRange(for: NSRange(location: start, length: 0)))
+        var nextStart = end
+        while nextStart < nsText.length {
+            let lineRange = nsText.lineRange(for: NSRange(location: nextStart, length: 0))
+            let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
+            end = NSMaxRange(lineRange)
+            if line.hasPrefix("```") {
+                break
+            }
+            if end <= nextStart { break }
+            nextStart = end
+        }
+
+        return NSRange(location: start, length: max(0, end - start))
+    }
+
+    private func isInsideFencedCodeBlock(location: Int, in nsText: NSString) -> Bool {
+        var scan = 0
+        var isInside = false
+
+        while scan < nsText.length && scan <= location {
+            let lineRange = nsText.lineRange(for: NSRange(location: scan, length: 0))
+            let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
+            if line.hasPrefix("```") {
+                isInside.toggle()
+            }
+            let next = NSMaxRange(lineRange)
+            if next <= scan { break }
+            scan = next
+        }
+
+        return isInside
+    }
+
+    private func previousLineStart(before location: Int, in nsText: NSString) -> Int? {
+        guard location > 0 else { return nil }
+        let previousLocation = max(0, location - 1)
+        let range = nsText.lineRange(for: NSRange(location: previousLocation, length: 0))
+        guard range.location < location else { return nil }
+        return range.location
+    }
+
+    private func isListLine(_ line: String) -> Bool {
+        line.range(of: #"^\s*([-*+] |\d+\. |\[ \] |\[x\] )"#, options: .regularExpression) != nil
+    }
+
+    private func isQuoteLine(_ line: String) -> Bool {
+        line.range(of: #"^\s*>\s?"#, options: .regularExpression) != nil
     }
 }

@@ -48,6 +48,36 @@ struct MarkdownStylerTests {
         #expect(link == URL(string: "https://example.com"))
     }
 
+    @Test func dirtyRangeForPlainTextUsesCurrentParagraphOnly() throws {
+        let text = "First paragraph\n\nSecond paragraph has **bold** text\n\nThird paragraph"
+        let resolver = MarkdownDirtyRangeResolver()
+        let editedLocation = (text as NSString).range(of: "bold").location
+        let range = resolver.dirtyRange(affectedBy: NSRange(location: editedLocation, length: 1), in: text)
+        let dirtyText = (text as NSString).substring(with: range)
+
+        #expect(dirtyText == "Second paragraph has **bold** text\n")
+    }
+
+    @Test func dirtyRangeForListUsesContiguousListBlock() throws {
+        let text = "Intro\n- One\n- Two\n  - Three\n\nOutro"
+        let resolver = MarkdownDirtyRangeResolver()
+        let editedLocation = (text as NSString).range(of: "Two").location
+        let range = resolver.dirtyRange(affectedBy: NSRange(location: editedLocation, length: 1), in: text)
+        let dirtyText = (text as NSString).substring(with: range)
+
+        #expect(dirtyText == "- One\n- Two\n  - Three\n")
+    }
+
+    @Test func dirtyRangeForFencedCodeUsesCompleteFence() throws {
+        let text = "Intro\n```swift\nlet x = 1\nlet y = 2\n```\nOutro"
+        let resolver = MarkdownDirtyRangeResolver()
+        let editedLocation = (text as NSString).range(of: "x = 1").location
+        let range = resolver.dirtyRange(affectedBy: NSRange(location: editedLocation, length: 1), in: text)
+        let dirtyText = (text as NSString).substring(with: range)
+
+        #expect(dirtyText == "```swift\nlet x = 1\nlet y = 2\n```\n")
+    }
+
     @Test func returnContinuesBulletList() throws {
         let engine = MarkdownEditingEngine()
         let text = "- First"
