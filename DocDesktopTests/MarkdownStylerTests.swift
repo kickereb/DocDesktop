@@ -68,6 +68,15 @@ struct MarkdownStylerTests {
         #expect(dirtyText == "- One\n- Two\n  - Three\n")
     }
 
+    @Test func dirtyRangeForNewOrderedListMarkerUsesCurrentLine() throws {
+        let text = "1. Test list element"
+        let resolver = MarkdownDirtyRangeResolver()
+        let range = resolver.dirtyRange(affectedBy: NSRange(location: 2, length: 1), in: text)
+        let dirtyText = (text as NSString).substring(with: range)
+
+        #expect(dirtyText == text)
+    }
+
     @Test func dirtyRangeForFencedCodeUsesCompleteFence() throws {
         let text = "Intro\n```swift\nlet x = 1\nlet y = 2\n```\nOutro"
         let resolver = MarkdownDirtyRangeResolver()

@@ -120,7 +120,9 @@ struct MarkdownEditorView: NSViewRepresentable {
             lastEditorEmittedText = textView.string
             let selectedRange = textView.selectedRange()
             let visibleOrigin = visibleOrigin(for: textView)
-            let editedRange = textView.textStorage?.editedRange ?? selectedRange
+            let editedRange = (textView as? MarkdownNSTextView)?.consumePendingStylingRange()
+                ?? textView.textStorage?.editedRange
+                ?? selectedRange
             debugLog(event: "textDidChange", textView: textView, editedRange: editedRange, origin: "user")
             applyStyle(to: textView, affectedBy: editedRange)
             setSelectedRangeIfNeeded(selectedRange, for: textView)
@@ -241,11 +243,23 @@ struct MarkdownEditorView: NSViewRepresentable {
 
 private final class MarkdownNSTextView: NSTextView {
     private let editingEngine = MarkdownEditingEngine()
+    private var pendingStylingRange: NSRange?
 
     override var acceptsFirstResponder: Bool { true }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
+    }
+
+    override func shouldChangeText(in affectedCharRange: NSRange, replacementString: String?) -> Bool {
+        if let replacementString {
+            pendingStylingRange = NSRange(
+                location: affectedCharRange.location,
+                length: max(affectedCharRange.length, (replacementString as NSString).length)
+            )
+        }
+
+        return super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -343,10 +357,20 @@ private final class MarkdownNSTextView: NSTextView {
     private func applyReplacement(_ replacement: MarkdownEditingEngine.TextReplacement) {
         guard shouldChangeText(in: replacement.range, replacementString: replacement.text) else { return }
         let visibleOrigin = enclosingScrollView?.contentView.bounds.origin
+        pendingStylingRange = NSRange(
+            location: replacement.range.location,
+            length: max(replacement.range.length, (replacement.text as NSString).length)
+        )
         textStorage?.replaceCharacters(in: replacement.range, with: replacement.text)
         didChangeText()
         setSelectedRangeIfNeeded(replacement.selectedRange)
         restoreVisibleOriginIfNeeded(visibleOrigin)
+    }
+
+    func consumePendingStylingRange() -> NSRange? {
+        let range = pendingStylingRange
+        pendingStylingRange = nil
+        return range
     }
 
     private func setSelectedRangeIfNeeded(_ range: NSRange) {
