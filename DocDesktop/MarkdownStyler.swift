@@ -152,6 +152,12 @@ struct MarkdownEditingEngine {
 }
 
 struct MarkdownStyler {
+    private struct CheckboxMarker {
+        let location: Int
+        let length: Int
+        let isChecked: Bool
+    }
+
     private let baseFont = NSFont.systemFont(ofSize: 16)
     private let monospacedFont = NSFont.monospacedSystemFont(ofSize: 15, weight: .regular)
     private let textColor = NSColor.white
@@ -256,10 +262,40 @@ struct MarkdownStyler {
             } else if let list = listPrefix(in: line, orderedCounters: &orderedCounters) {
                 let style = paragraphStyle(indent: CGFloat(list.level + 1) * 24, firstLineIndent: CGFloat(list.level) * 24, spacingBefore: 2, spacingAfter: 2)
                 text.addAttribute(.paragraphStyle, value: style, range: paragraphRange)
-                text.addAttributes([
-                    .foregroundColor: markerColor,
-                    .font: baseFont
-                ], range: NSRange(location: lineRange.location, length: list.markerLength))
+                if let checkbox = list.checkbox {
+                    let markerRange = NSRange(location: lineRange.location + checkbox.location, length: checkbox.length)
+                    text.addAttributes([
+                        .foregroundColor: NSColor.clear,
+                        .font: baseFont
+                    ], range: markerRange)
+
+                    let trailingSpaceRange = NSRange(
+                        location: NSMaxRange(markerRange),
+                        length: max(0, list.markerLength - (checkbox.location + checkbox.length))
+                    )
+                    if trailingSpaceRange.length > 0 {
+                        text.addAttributes([
+                            .foregroundColor: NSColor.clear,
+                            .font: baseFont
+                        ], range: trailingSpaceRange)
+                    }
+
+                    if checkbox.isChecked {
+                        let contentStart = lineRange.location + list.markerLength
+                        let contentRange = NSRange(location: contentStart, length: max(0, contentLength - list.markerLength))
+                        if contentRange.length > 0 {
+                            text.addAttributes([
+                                .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                                .foregroundColor: textColor.withAlphaComponent(0.5)
+                            ], range: contentRange)
+                        }
+                    }
+                } else {
+                    text.addAttributes([
+                        .foregroundColor: markerColor,
+                        .font: baseFont
+                    ], range: NSRange(location: lineRange.location, length: list.markerLength))
+                }
             } else if horizontalRule(in: line) {
                 text.addAttributes([
                     .foregroundColor: markerColor,
@@ -376,7 +412,7 @@ struct MarkdownStyler {
         return match.range.length
     }
 
-    private func listPrefix(in line: String, orderedCounters: inout [Int: Int]) -> (level: Int, markerLength: Int)? {
+    private func listPrefix(in line: String, orderedCounters: inout [Int: Int]) -> (level: Int, markerLength: Int, checkbox: CheckboxMarker?)? {
         let nsLine = line as NSString
         guard let regex = try? NSRegularExpression(pattern: #"^(\s*)([-*+] |\d+\. |\[ \] |\[x\] )"#),
               let match = regex.firstMatch(in: line, range: NSRange(location: 0, length: nsLine.length)) else {
@@ -384,7 +420,19 @@ struct MarkdownStyler {
         }
 
         let indentLength = match.range(at: 1).length
-        return (indentLength / 2, match.range.length)
+        let markerRange = match.range(at: 2)
+        let marker = nsLine.substring(with: markerRange)
+        let checkbox: CheckboxMarker?
+        if marker.hasPrefix("[ ]") || marker.hasPrefix("[x]") {
+            checkbox = CheckboxMarker(
+                location: markerRange.location,
+                length: 3,
+                isChecked: marker.hasPrefix("[x]")
+            )
+        } else {
+            checkbox = nil
+        }
+        return (indentLength / 2, match.range.length, checkbox)
     }
 
     private func horizontalRule(in line: String) -> Bool {

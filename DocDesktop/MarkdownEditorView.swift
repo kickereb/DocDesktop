@@ -242,8 +242,16 @@ struct MarkdownEditorView: NSViewRepresentable {
 }
 
 private final class MarkdownNSTextView: NSTextView {
+    private struct CheckboxRenderInfo {
+        let lineRange: NSRange
+        let markerRange: NSRange
+        let isChecked: Bool
+    }
+
     private let editingEngine = MarkdownEditingEngine()
     private var pendingStylingRange: NSRange?
+    private var hoverTrackingArea: NSTrackingArea?
+    private var hoveredCheckboxRange: NSRange?
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -260,6 +268,45 @@ private final class MarkdownNSTextView: NSTextView {
         }
 
         return super.shouldChangeText(in: affectedCharRange, replacementString: replacementString)
+    }
+
+    override func updateTrackingAreas() {
+        if let hoverTrackingArea {
+            removeTrackingArea(hoverTrackingArea)
+        }
+
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        hoverTrackingArea = trackingArea
+        super.updateTrackingAreas()
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let nextRange = checkboxInfo(at: point)?.markerRange
+        if hoveredCheckboxRange != nextRange {
+            hoveredCheckboxRange = nextRange
+            needsDisplay = true
+        }
+        super.mouseMoved(with: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if hoveredCheckboxRange != nil {
+            hoveredCheckboxRange = nil
+            needsDisplay = true
+        }
+        super.mouseExited(with: event)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        drawMarkdownCheckboxes()
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -347,11 +394,10 @@ private final class MarkdownNSTextView: NSTextView {
 
     private func checkboxReplacement(for event: NSEvent) -> MarkdownEditingEngine.TextReplacement? {
         let point = convert(event.locationInWindow, from: nil)
-        let insertionIndex = characterIndexForInsertion(at: point)
-        guard let lineLocation = lineLocation(at: insertionIndex) else {
+        guard let checkbox = checkboxInfo(at: point) else {
             return nil
         }
-        return editingEngine.replacementForCheckboxToggle(in: string, location: lineLocation)
+        return editingEngine.replacementForCheckboxToggle(in: string, location: checkbox.lineRange.location)
     }
 
     private func applyReplacement(_ replacement: MarkdownEditingEngine.TextReplacement) {
@@ -429,6 +475,109 @@ private final class MarkdownNSTextView: NSTextView {
         guard nsText.length > 0 else { return nil }
         let safeLocation = min(max(0, location), max(0, nsText.length - 1))
         return nsText.lineRange(for: NSRange(location: safeLocation, length: 0)).location
+    }
+
+    private func drawMarkdownCheckboxes() {
+        guard let layoutManager,
+              let textContainer,
+              !string.isEmpty else {
+            return
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+        let nsText = string as NSString
+        var location = 0
+
+        while location < nsText.length {
+            let lineRange = nsText.lineRange(for: NSRange(location: location, length: 0))
+            if let checkbox = checkboxInfo(in: lineRange) {
+                drawCheckbox(checkbox, layoutManager: layoutManager, textContainer: textContainer)
+            }
+
+            let next = NSMaxRange(lineRange)
+            if next <= location { break }
+            location = next
+        }
+    }
+
+    private func drawCheckbox(_ checkbox: CheckboxRenderInfo, layoutManager: NSLayoutManager, textContainer: NSTextContainer) {
+        let boxRect = checkboxBoxRect(for: checkbox, layoutManager: layoutManager, textContainer: textContainer)
+        let isHovered = hoveredCheckboxRange == checkbox.markerRange
+        let borderColor = isHovered ? NSColor.systemRed : NSColor.white.withAlphaComponent(0.78)
+        let fillColor = checkbox.isChecked ? NSColor.systemPink.withAlphaComponent(0.24) : NSColor.clear
+        let path = NSBezierPath(roundedRect: boxRect, xRadius: 3.5, yRadius: 3.5)
+
+        fillColor.setFill()
+        path.fill()
+        borderColor.setStroke()
+        path.lineWidth = 1.8
+        path.stroke()
+
+        guard checkbox.isChecked else { return }
+
+        let tickPath = NSBezierPath()
+        tickPath.move(to: NSPoint(x: boxRect.minX + 4.0, y: boxRect.midY - 0.5))
+        tickPath.line(to: NSPoint(x: boxRect.midX - 1.0, y: boxRect.minY + 4.0))
+        tickPath.line(to: NSPoint(x: boxRect.maxX - 3.5, y: boxRect.maxY - 4.0))
+        NSColor.systemPink.setStroke()
+        tickPath.lineWidth = 2.0
+        tickPath.lineCapStyle = .round
+        tickPath.lineJoinStyle = .round
+        tickPath.stroke()
+    }
+
+    private func checkboxInfo(at point: NSPoint) -> CheckboxRenderInfo? {
+        guard let layoutManager,
+              let textContainer,
+              !string.isEmpty else {
+            return nil
+        }
+
+        let insertionIndex = characterIndexForInsertion(at: point)
+        let nsText = string as NSString
+        let safeLocation = min(max(0, insertionIndex), max(0, nsText.length - 1))
+        let lineRange = nsText.lineRange(for: NSRange(location: safeLocation, length: 0))
+        guard let checkbox = checkboxInfo(in: lineRange) else {
+            return nil
+        }
+
+        let hitRect = checkboxBoxRect(for: checkbox, layoutManager: layoutManager, textContainer: textContainer)
+            .insetBy(dx: -4, dy: -4)
+        return hitRect.contains(point) ? checkbox : nil
+    }
+
+    private func checkboxInfo(in lineRange: NSRange) -> CheckboxRenderInfo? {
+        let nsText = string as NSString
+        let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
+        let nsLine = line as NSString
+        guard let regex = try? NSRegularExpression(pattern: #"^(\s*)(\[[ x]\]) "#),
+              let match = regex.firstMatch(in: line, range: NSRange(location: 0, length: nsLine.length)) else {
+            return nil
+        }
+
+        let markerRange = match.range(at: 2)
+        let marker = nsLine.substring(with: markerRange)
+        return CheckboxRenderInfo(
+            lineRange: lineRange,
+            markerRange: NSRange(location: lineRange.location + markerRange.location, length: markerRange.length),
+            isChecked: marker == "[x]"
+        )
+    }
+
+    private func checkboxBoxRect(
+        for checkbox: CheckboxRenderInfo,
+        layoutManager: NSLayoutManager,
+        textContainer: NSTextContainer
+    ) -> NSRect {
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: checkbox.markerRange, actualCharacterRange: nil)
+        let markerRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            .offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        let lineGlyphRange = layoutManager.glyphRange(forCharacterRange: checkbox.lineRange, actualCharacterRange: nil)
+        let lineRect = layoutManager.boundingRect(forGlyphRange: lineGlyphRange, in: textContainer)
+            .offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        let size: CGFloat = 18
+        let y = lineRect.isEmpty ? markerRect.minY : lineRect.midY - size / 2
+        return NSRect(x: markerRect.minX + 2, y: y, width: size, height: size)
     }
 }
 

@@ -48,6 +48,20 @@ struct MarkdownStylerTests {
         #expect(link == URL(string: "https://example.com"))
     }
 
+    @Test func checkedCheckboxStrikesThroughItemText() throws {
+        let markdown = "[x] Done\n[ ] Open\n"
+        let styled = MarkdownStyler().attributedString(for: markdown)
+        let doneIndex = (markdown as NSString).range(of: "Done").location
+        let openIndex = (markdown as NSString).range(of: "Open").location
+        let checkedMarkerColor = try #require(styled.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)
+        let doneStrike = styled.attribute(.strikethroughStyle, at: doneIndex, effectiveRange: nil) as? Int
+        let openStrike = styled.attribute(.strikethroughStyle, at: openIndex, effectiveRange: nil) as? Int
+
+        #expect(checkedMarkerColor.alphaComponent == 0)
+        #expect(doneStrike == NSUnderlineStyle.single.rawValue)
+        #expect(openStrike == nil)
+    }
+
     @Test func dirtyRangeForPlainTextUsesCurrentParagraphOnly() throws {
         let text = "First paragraph\n\nSecond paragraph has **bold** text\n\nThird paragraph"
         let resolver = MarkdownDirtyRangeResolver()
