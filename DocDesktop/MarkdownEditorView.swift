@@ -419,6 +419,7 @@ private final class MarkdownNSTextView: NSTextView {
         didChangeText()
         setSelectedRangeIfNeeded(replacement.selectedRange)
         restoreVisibleOriginIfNeeded(visibleOrigin)
+        needsDisplay = true
     }
 
     func consumePendingStylingRange() -> NSRange? {
@@ -572,12 +573,18 @@ private final class MarkdownNSTextView: NSTextView {
         textContainer: NSTextContainer
     ) -> NSRect {
         let glyphRange = layoutManager.glyphRange(forCharacterRange: imageInfo.lineRange, actualCharacterRange: nil)
-        let lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
-            .offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        let lineRect: NSRect
+        if glyphRange.length > 0 {
+            lineRect = layoutManager.lineFragmentRect(forGlyphAt: glyphRange.location, effectiveRange: nil)
+                .offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        } else {
+            lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+                .offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        }
         let availableWidth = max(120, bounds.width - textContainerInset.width * 2 - 16)
         let width = min(availableWidth, 520)
         let x = lineRect.isEmpty ? textContainerOrigin.x : lineRect.minX + 4
-        let y = lineRect.isEmpty ? textContainerOrigin.y : lineRect.midY - inlineImageHeight / 2
+        let y = lineRect.isEmpty ? textContainerOrigin.y : lineRect.minY + 10
         return NSRect(x: x, y: y, width: width, height: inlineImageHeight).integral
     }
 
@@ -651,8 +658,8 @@ private final class MarkdownNSTextView: NSTextView {
 
         let tickPath = NSBezierPath()
         tickPath.move(to: NSPoint(x: boxRect.minX + 4.0, y: boxRect.midY - 0.5))
-        tickPath.line(to: NSPoint(x: boxRect.midX - 1.0, y: boxRect.minY + 4.0))
-        tickPath.line(to: NSPoint(x: boxRect.maxX - 3.5, y: boxRect.maxY - 4.0))
+        tickPath.line(to: NSPoint(x: boxRect.midX - 1.0, y: boxRect.maxY - 4.0))
+        tickPath.line(to: NSPoint(x: boxRect.maxX - 3.5, y: boxRect.minY + 4.0))
         NSColor.systemPink.setStroke()
         tickPath.lineWidth = 2.0
         tickPath.lineCapStyle = .round
@@ -730,6 +737,14 @@ private enum MarkdownImagePasteboardWriter {
     }
 
     private static func imageFileURL(from pasteboard: NSPasteboard) -> URL? {
+        if let urls = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL],
+           let imageURL = urls.first(where: { NSImage(contentsOf: $0) != nil }) {
+            return imageURL
+        }
+
         guard let fileURLString = pasteboard.string(forType: .fileURL),
               let url = URL(string: fileURLString),
               NSImage(contentsOf: url) != nil else {

@@ -33,10 +33,10 @@ final class GlobalHotKeyManager {
 
         guard status == noErr else { return }
 
-        var hotKeyID = EventHotKeyID(signature: 0x4444484B, id: 1)
+        let hotKeyID = EventHotKeyID(signature: 0x4444484B, id: 1)
         RegisterEventHotKey(
             UInt32(kVK_ANSI_D),
-            UInt32(cmdKey | shiftKey),
+            UInt32(cmdKey | controlKey),
             hotKeyID,
             GetApplicationEventTarget(),
             0,

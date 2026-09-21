@@ -368,7 +368,7 @@ struct MarkdownStyler {
             ]
         }
 
-        applyInline(pattern: #"(\[)([^\]\n]+)(\]\()([^\s)]+)(\))"#, in: text, range: safeRange) { match, nsText in
+        applyInline(pattern: #"(?<!!)(\[)([^\]\n]+)(\]\()([^\s)]+)(\))"#, in: text, range: safeRange) { match, nsText in
             let urlText = nsText.substring(with: match.range(at: 4))
             let url = URL(string: urlText)
             var linkAttrs: [NSAttributedString.Key: Any] = [
