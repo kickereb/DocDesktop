@@ -164,6 +164,7 @@ struct MarkdownStyler {
     private let markerColor = NSColor.white.withAlphaComponent(0.35)
     private let linkColor = NSColor.systemBlue
     private let quoteColor = NSColor.systemMint
+    private let imagePreviewHeight: CGFloat = 190
 
     func attributedString(for markdown: String) -> NSAttributedString {
         let output = NSMutableAttributedString(
@@ -241,7 +242,18 @@ struct MarkdownStyler {
                 continue
             }
 
-            if let heading = headingPrefix(in: line) {
+            if imageReference(in: line) {
+                text.addAttributes([
+                    .font: NSFont.systemFont(ofSize: 1),
+                    .foregroundColor: NSColor.clear,
+                    .paragraphStyle: paragraphStyle(
+                        spacingBefore: 10,
+                        spacingAfter: 10,
+                        minimumLineHeight: imagePreviewHeight,
+                        maximumLineHeight: imagePreviewHeight
+                    )
+                ], range: paragraphRange)
+            } else if let heading = headingPrefix(in: line) {
                 let contentRange = NSRange(location: lineRange.location + heading.length, length: max(0, contentLength - heading.length))
                 text.addAttributes([
                     .font: headingFont(level: heading.level),
@@ -440,6 +452,14 @@ struct MarkdownStyler {
         return trimmed == "---" || trimmed == "***" || trimmed == "___"
     }
 
+    private func imageReference(in line: String) -> Bool {
+        let nsLine = line as NSString
+        guard let regex = try? NSRegularExpression(pattern: #"^\s*!\[[^\]\n]*\]\([^)]+\)\s*$"#) else {
+            return false
+        }
+        return regex.firstMatch(in: line, range: NSRange(location: 0, length: nsLine.length)) != nil
+    }
+
     private func headingFont(level: Int) -> NSFont {
         let size: CGFloat
         switch level {
@@ -457,13 +477,22 @@ struct MarkdownStyler {
         return NSFont.boldSystemFont(ofSize: size)
     }
 
-    private func paragraphStyle(indent: CGFloat = 0, firstLineIndent: CGFloat = 0, spacingBefore: CGFloat = 4, spacingAfter: CGFloat = 6) -> NSMutableParagraphStyle {
+    private func paragraphStyle(
+        indent: CGFloat = 0,
+        firstLineIndent: CGFloat = 0,
+        spacingBefore: CGFloat = 4,
+        spacingAfter: CGFloat = 6,
+        minimumLineHeight: CGFloat = 0,
+        maximumLineHeight: CGFloat = 0
+    ) -> NSMutableParagraphStyle {
         let style = NSMutableParagraphStyle()
         style.lineSpacing = 2
         style.paragraphSpacingBefore = spacingBefore
         style.paragraphSpacing = spacingAfter
         style.headIndent = indent
         style.firstLineHeadIndent = firstLineIndent
+        style.minimumLineHeight = minimumLineHeight
+        style.maximumLineHeight = maximumLineHeight
         return style
     }
 

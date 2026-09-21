@@ -248,7 +248,14 @@ private final class MarkdownNSTextView: NSTextView {
         let isChecked: Bool
     }
 
+    private struct ImageRenderInfo {
+        let lineRange: NSRange
+        let source: String
+        let altText: String
+    }
+
     private let editingEngine = MarkdownEditingEngine()
+    private let inlineImageHeight: CGFloat = 170
     private var pendingStylingRange: NSRange?
     private var hoverTrackingArea: NSTrackingArea?
     private var hoveredCheckboxRange: NSRange?
@@ -306,6 +313,7 @@ private final class MarkdownNSTextView: NSTextView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        drawMarkdownImages()
         drawMarkdownCheckboxes()
     }
 
@@ -475,6 +483,132 @@ private final class MarkdownNSTextView: NSTextView {
         guard nsText.length > 0 else { return nil }
         let safeLocation = min(max(0, location), max(0, nsText.length - 1))
         return nsText.lineRange(for: NSRange(location: safeLocation, length: 0)).location
+    }
+
+    private func drawMarkdownImages() {
+        guard let layoutManager,
+              let textContainer,
+              !string.isEmpty else {
+            return
+        }
+
+        layoutManager.ensureLayout(for: textContainer)
+        let nsText = string as NSString
+        var location = 0
+
+        while location < nsText.length {
+            let lineRange = nsText.lineRange(for: NSRange(location: location, length: 0))
+            if let imageInfo = imageInfo(in: lineRange),
+               let image = image(for: imageInfo.source) {
+                drawImage(image, for: imageInfo, layoutManager: layoutManager, textContainer: textContainer)
+            }
+
+            let next = NSMaxRange(lineRange)
+            if next <= location { break }
+            location = next
+        }
+    }
+
+    private func drawImage(
+        _ image: NSImage,
+        for imageInfo: ImageRenderInfo,
+        layoutManager: NSLayoutManager,
+        textContainer: NSTextContainer
+    ) {
+        let imageRect = imageRect(for: imageInfo, layoutManager: layoutManager, textContainer: textContainer)
+        guard imageRect.width > 1, imageRect.height > 1 else { return }
+
+        let backgroundPath = NSBezierPath(roundedRect: imageRect, xRadius: 9, yRadius: 9)
+        NSColor.black.withAlphaComponent(0.22).setFill()
+        backgroundPath.fill()
+
+        NSGraphicsContext.saveGraphicsState()
+        backgroundPath.addClip()
+        image.draw(
+            in: imageRect,
+            from: sourceCropRect(for: image.size, targetSize: imageRect.size),
+            operation: .sourceOver,
+            fraction: 1,
+            respectFlipped: true,
+            hints: [.interpolation: NSImageInterpolation.high]
+        )
+        NSGraphicsContext.restoreGraphicsState()
+
+        NSColor.white.withAlphaComponent(0.18).setStroke()
+        backgroundPath.lineWidth = 1
+        backgroundPath.stroke()
+    }
+
+    private func imageInfo(in lineRange: NSRange) -> ImageRenderInfo? {
+        let nsText = string as NSString
+        let line = nsText.substring(with: lineRange).trimmingCharacters(in: .newlines)
+        let nsLine = line as NSString
+        guard let regex = try? NSRegularExpression(pattern: #"^\s*!\[([^\]\n]*)\]\(([^)]+)\)\s*$"#),
+              let match = regex.firstMatch(in: line, range: NSRange(location: 0, length: nsLine.length)),
+              match.range(at: 2).location != NSNotFound else {
+            return nil
+        }
+
+        let altText = match.range(at: 1).location == NSNotFound ? "" : nsLine.substring(with: match.range(at: 1))
+        let source = nsLine.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespaces)
+        return ImageRenderInfo(lineRange: lineRange, source: source, altText: altText)
+    }
+
+    private func image(for source: String) -> NSImage? {
+        if let url = URL(string: source), url.isFileURL {
+            return NSImage(contentsOf: url)
+        }
+
+        if source.hasPrefix("/") {
+            return NSImage(contentsOf: URL(fileURLWithPath: source))
+        }
+
+        return nil
+    }
+
+    private func imageRect(
+        for imageInfo: ImageRenderInfo,
+        layoutManager: NSLayoutManager,
+        textContainer: NSTextContainer
+    ) -> NSRect {
+        let glyphRange = layoutManager.glyphRange(forCharacterRange: imageInfo.lineRange, actualCharacterRange: nil)
+        let lineRect = layoutManager.boundingRect(forGlyphRange: glyphRange, in: textContainer)
+            .offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+        let availableWidth = max(120, bounds.width - textContainerInset.width * 2 - 16)
+        let width = min(availableWidth, 520)
+        let x = lineRect.isEmpty ? textContainerOrigin.x : lineRect.minX + 4
+        let y = lineRect.isEmpty ? textContainerOrigin.y : lineRect.midY - inlineImageHeight / 2
+        return NSRect(x: x, y: y, width: width, height: inlineImageHeight).integral
+    }
+
+    private func sourceCropRect(for imageSize: NSSize, targetSize: NSSize) -> NSRect {
+        guard imageSize.width > 0,
+              imageSize.height > 0,
+              targetSize.width > 0,
+              targetSize.height > 0 else {
+            return NSRect(origin: .zero, size: imageSize)
+        }
+
+        let imageAspect = imageSize.width / imageSize.height
+        let targetAspect = targetSize.width / targetSize.height
+
+        if imageAspect > targetAspect {
+            let sourceWidth = imageSize.height * targetAspect
+            return NSRect(
+                x: (imageSize.width - sourceWidth) / 2,
+                y: 0,
+                width: sourceWidth,
+                height: imageSize.height
+            )
+        }
+
+        let sourceHeight = imageSize.width / targetAspect
+        return NSRect(
+            x: 0,
+            y: (imageSize.height - sourceHeight) / 2,
+            width: imageSize.width,
+            height: sourceHeight
+        )
     }
 
     private func drawMarkdownCheckboxes() {

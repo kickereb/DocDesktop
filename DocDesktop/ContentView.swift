@@ -102,8 +102,6 @@ struct ContentView: View {
                             editorSelection = range
                         }
                     )
-
-                    MarkdownImagePreviewStrip(markdown: contentViewModel.editedText)
                 }
             } else {
                 MacAttributedTextView(
