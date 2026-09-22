@@ -332,6 +332,12 @@ private final class MarkdownNSTextView: NSTextView {
     }
 
     override func keyDown(with event: NSEvent) {
+        if isPasteKey(event),
+           let markdown = MarkdownImagePasteboardWriter.markdownImageReference(from: .general) {
+            insertMarkdownImageReference(markdown)
+            return
+        }
+
         if isReturnKey(event),
            let replacement = editingEngine.replacementForReturn(in: string, selectedRange: selectedRange()) {
             applyReplacement(replacement)
@@ -365,17 +371,20 @@ private final class MarkdownNSTextView: NSTextView {
 
     override func paste(_ sender: Any?) {
         if let markdown = MarkdownImagePasteboardWriter.markdownImageReference(from: .general) {
-            let range = selectedRange()
-            let replacement: MarkdownEditingEngine.TextReplacement = (
-                range: range,
-                text: markdown,
-                selectedRange: NSRange(location: range.location + (markdown as NSString).length, length: 0)
-            )
-            applyReplacement(replacement)
+            insertMarkdownImageReference(markdown)
             return
         }
 
         super.paste(sender)
+    }
+
+    override func readSelection(from pasteboard: NSPasteboard, type: NSPasteboard.PasteboardType) -> Bool {
+        if let markdown = MarkdownImagePasteboardWriter.markdownImageReference(from: pasteboard) {
+            insertMarkdownImageReference(markdown)
+            return true
+        }
+
+        return super.readSelection(from: pasteboard, type: type)
     }
 
     private func activateWindowForEditing() {
@@ -392,6 +401,10 @@ private final class MarkdownNSTextView: NSTextView {
         event.keyCode == 48
     }
 
+    private func isPasteKey(_ event: NSEvent) -> Bool {
+        event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers?.lowercased() == "v"
+    }
+
     private func isCommandIndentKey(_ event: NSEvent) -> Bool {
         event.modifierFlags.contains(.command) && event.charactersIgnoringModifiers == "]"
     }
@@ -406,6 +419,16 @@ private final class MarkdownNSTextView: NSTextView {
             return nil
         }
         return editingEngine.replacementForCheckboxToggle(in: string, location: checkbox.lineRange.location)
+    }
+
+    private func insertMarkdownImageReference(_ markdown: String) {
+        let range = selectedRange()
+        let replacement: MarkdownEditingEngine.TextReplacement = (
+            range: range,
+            text: markdown,
+            selectedRange: NSRange(location: range.location + (markdown as NSString).length, length: 0)
+        )
+        applyReplacement(replacement)
     }
 
     private func applyReplacement(_ replacement: MarkdownEditingEngine.TextReplacement) {
@@ -799,8 +822,11 @@ private enum MarkdownImagePasteboardWriter {
         let imageTypes: [NSPasteboard.PasteboardType] = [
             .tiff,
             .png,
+            NSPasteboard.PasteboardType("public.image"),
+            NSPasteboard.PasteboardType("public.png"),
             NSPasteboard.PasteboardType("public.jpeg"),
-            NSPasteboard.PasteboardType("public.heic")
+            NSPasteboard.PasteboardType("public.heic"),
+            NSPasteboard.PasteboardType("com.compuserve.gif")
         ]
 
         for type in imageTypes {
@@ -810,7 +836,25 @@ private enum MarkdownImagePasteboardWriter {
             }
         }
 
+        for type in pasteboard.types ?? [] where looksLikeImageType(type) {
+            if let data = pasteboard.data(forType: type),
+               let image = NSImage(data: data) {
+                return image
+            }
+        }
+
         return nil
+    }
+
+    private static func looksLikeImageType(_ type: NSPasteboard.PasteboardType) -> Bool {
+        let rawValue = type.rawValue.lowercased()
+        return rawValue.contains("image")
+            || rawValue.contains("png")
+            || rawValue.contains("jpeg")
+            || rawValue.contains("jpg")
+            || rawValue.contains("tiff")
+            || rawValue.contains("heic")
+            || rawValue.contains("gif")
     }
 
     private static func save(image: NSImage) -> URL? {
