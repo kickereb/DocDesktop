@@ -242,7 +242,7 @@ struct MarkdownStyler {
                 continue
             }
 
-            if imageReference(in: line) {
+            if imageReference(in: line) || localImagePath(in: line) {
                 text.addAttributes([
                     .font: NSFont.systemFont(ofSize: 1),
                     .foregroundColor: NSColor.clear,
@@ -458,6 +458,17 @@ struct MarkdownStyler {
             return false
         }
         return regex.firstMatch(in: line, range: NSRange(location: 0, length: nsLine.length)) != nil
+    }
+
+    private func localImagePath(in line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.hasPrefix("/"),
+              trimmed.rangeOfCharacter(from: .newlines) == nil else {
+            return false
+        }
+
+        let imageExtensions: Set<String> = ["jpg", "jpeg", "png", "gif", "heic", "tiff", "tif", "webp"]
+        return imageExtensions.contains(URL(fileURLWithPath: trimmed).pathExtension.lowercased())
     }
 
     private func headingFont(level: Int) -> NSFont {

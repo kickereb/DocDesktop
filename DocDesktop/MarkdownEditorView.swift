@@ -547,12 +547,28 @@ private final class MarkdownNSTextView: NSTextView {
         guard let regex = try? NSRegularExpression(pattern: #"^\s*!\[([^\]\n]*)\]\(([^)]+)\)\s*$"#),
               let match = regex.firstMatch(in: line, range: NSRange(location: 0, length: nsLine.length)),
               match.range(at: 2).location != NSNotFound else {
-            return nil
+            let source = line.trimmingCharacters(in: .whitespaces)
+            guard isLocalImagePath(source) else { return nil }
+            return ImageRenderInfo(
+                lineRange: lineRange,
+                source: source,
+                altText: URL(fileURLWithPath: source).deletingPathExtension().lastPathComponent
+            )
         }
 
         let altText = match.range(at: 1).location == NSNotFound ? "" : nsLine.substring(with: match.range(at: 1))
         let source = nsLine.substring(with: match.range(at: 2)).trimmingCharacters(in: .whitespaces)
         return ImageRenderInfo(lineRange: lineRange, source: source, altText: altText)
+    }
+
+    private func isLocalImagePath(_ source: String) -> Bool {
+        guard source.hasPrefix("/"),
+              source.rangeOfCharacter(from: .newlines) == nil else {
+            return false
+        }
+
+        let imageExtensions: Set<String> = ["jpg", "jpeg", "png", "gif", "heic", "tiff", "tif", "webp"]
+        return imageExtensions.contains(URL(fileURLWithPath: source).pathExtension.lowercased())
     }
 
     private func image(for source: String) -> NSImage? {
@@ -728,7 +744,7 @@ private enum MarkdownImagePasteboardWriter {
             return markdownReference(for: fileURL)
         }
 
-        guard let image = NSImage(pasteboard: pasteboard),
+        guard let image = image(from: pasteboard),
               let savedURL = save(image: image) else {
             return nil
         }
@@ -745,12 +761,56 @@ private enum MarkdownImagePasteboardWriter {
             return imageURL
         }
 
+        if let string = pasteboard.string(forType: .string),
+           let url = imageURL(from: string) {
+            return url
+        }
+
         guard let fileURLString = pasteboard.string(forType: .fileURL),
               let url = URL(string: fileURLString),
               NSImage(contentsOf: url) != nil else {
             return nil
         }
         return url
+    }
+
+    private static func imageURL(from string: String) -> URL? {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let url = URL(string: trimmed),
+           url.isFileURL,
+           NSImage(contentsOf: url) != nil {
+            return url
+        }
+
+        let fileURL = URL(fileURLWithPath: trimmed)
+        guard fileURL.isFileURL,
+              NSImage(contentsOf: fileURL) != nil else {
+            return nil
+        }
+        return fileURL
+    }
+
+    private static func image(from pasteboard: NSPasteboard) -> NSImage? {
+        if let image = NSImage(pasteboard: pasteboard) {
+            return image
+        }
+
+        let imageTypes: [NSPasteboard.PasteboardType] = [
+            .tiff,
+            .png,
+            NSPasteboard.PasteboardType("public.jpeg"),
+            NSPasteboard.PasteboardType("public.heic")
+        ]
+
+        for type in imageTypes {
+            if let data = pasteboard.data(forType: type),
+               let image = NSImage(data: data) {
+                return image
+            }
+        }
+
+        return nil
     }
 
     private static func save(image: NSImage) -> URL? {

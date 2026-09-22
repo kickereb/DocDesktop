@@ -74,6 +74,18 @@ struct MarkdownStylerTests {
         #expect(paragraphStyle.maximumLineHeight >= 150)
     }
 
+    @Test func localImagePathLineIsHiddenAndReservesPreviewSpace() throws {
+        let markdown = "/Users/evam/Downloads/example.jpg\n"
+        let styled = MarkdownStyler().attributedString(for: markdown)
+        let foregroundColor = try #require(styled.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor)
+        let paragraphStyle = try #require(styled.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+
+        #expect(styled.string == markdown)
+        #expect(foregroundColor.alphaComponent == 0)
+        #expect(paragraphStyle.minimumLineHeight >= 150)
+        #expect(paragraphStyle.maximumLineHeight >= 150)
+    }
+
     @Test func dirtyRangeForPlainTextUsesCurrentParagraphOnly() throws {
         let text = "First paragraph\n\nSecond paragraph has **bold** text\n\nThird paragraph"
         let resolver = MarkdownDirtyRangeResolver()
