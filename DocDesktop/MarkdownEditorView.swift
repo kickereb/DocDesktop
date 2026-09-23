@@ -549,8 +549,8 @@ private final class MarkdownNSTextView: NSTextView {
         NSGraphicsContext.saveGraphicsState()
         backgroundPath.addClip()
         image.draw(
-            in: imageRect,
-            from: sourceCropRect(for: image.size, targetSize: imageRect.size),
+            in: aspectFitRect(for: image.size, in: imageRect),
+            from: NSRect(origin: .zero, size: image.size),
             operation: .sourceOver,
             fraction: 1,
             respectFlipped: true,
@@ -627,34 +627,30 @@ private final class MarkdownNSTextView: NSTextView {
         return NSRect(x: x, y: y, width: width, height: inlineImageHeight).integral
     }
 
-    private func sourceCropRect(for imageSize: NSSize, targetSize: NSSize) -> NSRect {
+    private func aspectFitRect(for imageSize: NSSize, in boundingRect: NSRect) -> NSRect {
         guard imageSize.width > 0,
               imageSize.height > 0,
-              targetSize.width > 0,
-              targetSize.height > 0 else {
-            return NSRect(origin: .zero, size: imageSize)
+              boundingRect.width > 0,
+              boundingRect.height > 0 else {
+            return boundingRect
         }
 
         let imageAspect = imageSize.width / imageSize.height
-        let targetAspect = targetSize.width / targetSize.height
+        let targetAspect = boundingRect.width / boundingRect.height
+        let fittedSize: NSSize
 
         if imageAspect > targetAspect {
-            let sourceWidth = imageSize.height * targetAspect
-            return NSRect(
-                x: (imageSize.width - sourceWidth) / 2,
-                y: 0,
-                width: sourceWidth,
-                height: imageSize.height
-            )
+            fittedSize = NSSize(width: boundingRect.width, height: boundingRect.width / imageAspect)
+        } else {
+            fittedSize = NSSize(width: boundingRect.height * imageAspect, height: boundingRect.height)
         }
 
-        let sourceHeight = imageSize.width / targetAspect
         return NSRect(
-            x: 0,
-            y: (imageSize.height - sourceHeight) / 2,
-            width: imageSize.width,
-            height: sourceHeight
-        )
+            x: boundingRect.midX - fittedSize.width / 2,
+            y: boundingRect.midY - fittedSize.height / 2,
+            width: fittedSize.width,
+            height: fittedSize.height
+        ).integral
     }
 
     private func drawMarkdownCheckboxes() {
